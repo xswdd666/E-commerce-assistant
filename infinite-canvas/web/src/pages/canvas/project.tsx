@@ -2972,12 +2972,13 @@ function InfiniteCanvasPage() {
     );
 
     const insertAssistantText = useCallback(
-        (text: string, title?: string) => {
+        (text: string, title?: string, source?: { projectId: string; kind: "script" | "storyboard"; versionId: string }) => {
             const center = screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
             const node = {
                 ...createCanvasNode(CanvasNodeType.Text, center, { content: text, status: NODE_STATUS_SUCCESS }),
                 title: title || text.slice(0, 32) || "Assistant Text",
             };
+            if (source) node.metadata = { ...node.metadata, commerceSource: { ...source, originalText: text } };
 
             setNodes((prev) => [...prev, node]);
             setSelectedNodeIds(new Set([node.id]));

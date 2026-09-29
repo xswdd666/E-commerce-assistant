@@ -19,7 +19,7 @@ import { createZip } from "@/lib/zip";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
-type Props = { open: boolean; onClose: () => void; canvasId: string; title: string; nodes: CanvasNodeData[]; connections: CanvasConnection[]; selectedNodeId?: string; onInsertImage: (dataUrl: string, title: string) => Promise<void>; onInsertText: (text: string, title: string) => void; onInsertVideo: (blob: Blob, title: string, projectId: string, deliverableId: string) => Promise<void> };
+type Props = { open: boolean; onClose: () => void; canvasId: string; title: string; nodes: CanvasNodeData[]; connections: CanvasConnection[]; selectedNodeId?: string; onInsertImage: (dataUrl: string, title: string) => Promise<void>; onInsertText: (text: string, title: string, source?: { projectId: string; kind: "script" | "storyboard"; versionId: string }) => void; onInsertVideo: (blob: Blob, title: string, projectId: string, deliverableId: string) => Promise<void> };
 
 export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, connections, selectedNodeId, onInsertImage, onInsertText, onInsertVideo }: Props) {
     const [project, setProject] = useState<StudioProject | null>(null);
@@ -84,6 +84,10 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
     };
 
     const selected = nodes.find((node) => node.id === selectedNodeId);
+    const selectedSource = selected?.metadata?.commerceSource;
+    const selectedAsset = selected?.metadata?.commerceAsset;
+    const selectedSourceCurrent = Boolean(project && selectedSource && selectedSource.projectId === project.id && selectedSource.originalText === selected?.metadata?.content &&
+        (selectedSource.kind === "script" ? selectedSource.versionId === project.script_approval : selectedSource.versionId === project.storyboard_approval));
     const inputs = connections.filter((connection) => connection.toNodeId === selectedNodeId).map((connection) => nodes.find((node) => node.id === connection.fromNodeId)).filter((node): node is CanvasNodeData => Boolean(node));
     const nodeNames = Object.fromEntries(nodes.map((node) => [node.id, node.title || node.type]));
     const selectedCosts = project?.costs.filter((cost) => selectedNodeId && cost.node_id === selectedNodeId) || [];
@@ -212,7 +216,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                             {chatQuote ? <Typography.Paragraph className="mt-2">费用：{chatQuote.estimate == null ? "未知" : chatQuote.estimate}；简报版本：{String((chatQuote.input_snapshot as { brief_id?: string }).brief_id || "无").slice(0, 12)}</Typography.Paragraph> : null}
                             {project.chat.map((item) => <div key={item.id} className="mt-3"><Typography.Text strong>{item.prompt}</Typography.Text><Typography.Paragraph className="mt-1 whitespace-pre-wrap">{item.reply}</Typography.Paragraph></div>)}
                         </section>
-                        <CommercePlanSection project={project} busy={busy} act={act} />
+                        <CommercePlanSection project={project} busy={busy} act={act} onInsertText={onInsertText} />
                         <CommercePromptSection project={project} busy={busy} act={act} onInsertImage={onInsertImage} onInsertText={onInsertText} />
                         <CommerceGallerySection project={project} busy={busy} act={act} />
                         <CommerceFlovaSection project={project} busy={busy} act={act} onInsertVideo={onInsertVideo} />
@@ -221,6 +225,8 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                         <section>
                             <Typography.Title level={5}>画布输入</Typography.Title>
                             <Typography.Paragraph>{selected ? `当前节点：${selected.title || selected.type}` : "选择一个画布节点查看其输入依赖"}</Typography.Paragraph>
+                            {selectedSource ? <Typography.Paragraph>来源：{selectedSource.kind === "script" ? "脚本" : "分镜"} {selectedSource.versionId.slice(0, 12)} · {selectedSourceCurrent ? "节点内容与当前批准版本一致" : "节点内容或批准版本已变化，请重新核对"}</Typography.Paragraph> : null}
+                            {selectedAsset ? <Typography.Paragraph>视频来源：{project.deliverables.find((item) => item.id === selectedAsset.deliverableId && selectedAsset.projectId === project.id)?.name || "来源项目或交付物已变化，请重新核对"}</Typography.Paragraph> : null}
                             {inputs.length ? inputs.map((node) => <Tag key={node.id}>{node.type} · {node.title || node.id}</Tag>) : <Typography.Text type="secondary">等待连接</Typography.Text>}
                             {selected ? <Typography.Paragraph className="mt-2">节点费用：{selectedCosts.length} 笔任务；已确认实付 {selectedSpend.size ? [...selectedSpend].map(([unit, amount]) => `${amount.toFixed(2)} ${unit}`).join("、") : "暂无"}；待结算 {selectedCosts.filter((cost) => cost.actual == null).length} 笔；预估未知 {selectedCosts.filter((cost) => cost.estimate == null).length} 笔。</Typography.Paragraph> : null}
                             <Typography.Paragraph type="secondary" className="mt-2">连线仅编辑画布。任务提交前需查看实际输入和费用；未知费用不会自动提交。</Typography.Paragraph>

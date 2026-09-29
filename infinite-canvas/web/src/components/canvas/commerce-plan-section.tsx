@@ -4,9 +4,9 @@ import { Button, Input, Select, Space, Tag, Typography } from "antd";
 import { studioApi, type StudioProject, type StudioQuote } from "@/services/api/commerce-studio";
 
 type ShotDraft = { visual: string; duration: number; reference_asset_id: string; caption: string; detail_ids: string[] };
-type Props = { project: StudioProject; busy: boolean; act: (operation: () => Promise<unknown>) => Promise<void> };
+type Props = { project: StudioProject; busy: boolean; act: (operation: () => Promise<unknown>) => Promise<void>; onInsertText: (text: string, title: string, source?: { projectId: string; kind: "script" | "storyboard"; versionId: string }) => void };
 
-export function CommercePlanSection({ project, busy, act }: Props) {
+export function CommercePlanSection({ project, busy, act, onInsertText }: Props) {
     const [offer, setOffer] = useState<StudioQuote | null>(null);
     const [jevOffer, setJevOffer] = useState<StudioQuote | null>(null);
     const [script, setScript] = useState("");
@@ -14,6 +14,8 @@ export function CommercePlanSection({ project, busy, act }: Props) {
     const master = project.master_versions.at(-1);
     const scriptVersion = project.script_versions.at(-1);
     const storyboard = project.storyboard_versions.at(-1);
+    const approvedScript = project.script_versions.find((item) => item.id === project.script_approval);
+    const approvedStoryboard = project.storyboard_versions.find((item) => item.id === project.storyboard_approval);
 
     useEffect(() => {
         if (!master?.asset_ids[0]) return;
@@ -48,6 +50,7 @@ export function CommercePlanSection({ project, busy, act }: Props) {
             <Input.TextArea rows={5} className="mt-2" placeholder="按选定主线编辑完整脚本" value={script} onChange={(event) => setScript(event.target.value)} />
             <Space className="mt-2"><Button disabled={busy || !script.trim()} onClick={() => void act(async () => { await studioApi.script(project.id, script); setScript(""); })}>保存脚本新版本</Button>{scriptVersion ? <Button type="primary" disabled={busy || project.script_approval === scriptVersion.id} onClick={() => void act(() => studioApi.approveScript(project.id, scriptVersion.id))}>批准最新脚本</Button> : null}</Space>
             {scriptVersion ? <Typography.Paragraph className="mt-2 whitespace-pre-wrap">最新脚本：{scriptVersion.text}</Typography.Paragraph> : null}
+            {approvedScript ? <Button type="link" onClick={() => onInsertText(approvedScript.text, "已批准广告脚本", { projectId: project.id, kind: "script", versionId: approvedScript.id })}>把已批准脚本加入画布</Button> : null}
         </div> : null}
 
         {project.script_approval && master ? <div className="mt-4">
@@ -63,6 +66,7 @@ export function CommercePlanSection({ project, busy, act }: Props) {
             <Typography.Paragraph className="mt-2">总时长：{shots.reduce((sum, shot) => sum + (Number.isFinite(shot.duration) ? shot.duration : 0), 0).toFixed(1)} 秒</Typography.Paragraph>
             <Space><Button onClick={() => setShots((current) => [...current, { visual: "", duration: 3, reference_asset_id: master.asset_ids[0], caption: "", detail_ids: [] }])}>增加镜头</Button><Button disabled={busy || shots.some((shot) => !shot.visual.trim() || !shot.reference_asset_id)} onClick={() => void act(() => studioApi.storyboard(project.id, shots))}>保存分镜新版本</Button>{storyboard ? <Button type="primary" disabled={busy || project.storyboard_approval === storyboard.id} onClick={() => void act(() => studioApi.approveStoryboard(project.id, storyboard.id))}>批准最新分镜</Button> : null}</Space>
             {storyboard ? <div className="mt-2"><Typography.Text>最新版本 {storyboard.shots.length} 镜头 · {storyboard.shots.reduce((sum, shot) => sum + shot.duration, 0).toFixed(1)} 秒 {project.storyboard_approval === storyboard.id ? "（已批准）" : "（待批准）"}</Typography.Text>{storyboard.shots.map((shot, index) => <Typography.Paragraph key={shot.id} className="mt-1">{index + 1}. {shot.visual} · {shot.duration} 秒 · {project.sources.find((source) => source.id === shot.reference_asset_id)?.view_label || "参考未知"}{shot.caption ? ` · 字幕：${shot.caption}` : ""}</Typography.Paragraph>)}</div> : null}
+            {approvedStoryboard ? <Button type="link" onClick={() => onInsertText(approvedStoryboard.shots.map((shot, index) => `${index + 1}. ${shot.visual}；${shot.duration} 秒；参考图 ${shot.reference_asset_id}；字幕 ${shot.caption || "无"}`).join("\n"), "已批准完整分镜", { projectId: project.id, kind: "storyboard", versionId: approvedStoryboard.id })}>把已批准分镜加入画布</Button> : null}
         </div> : null}
     </section>;
 }

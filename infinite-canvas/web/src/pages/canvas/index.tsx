@@ -83,6 +83,7 @@ export default function CanvasPage() {
                 const remapped = JSON.parse(JSON.stringify(exported.project, (_key, value) => typeof value === "string" ? newKeys.get(value) || value : value));
                 for (const node of remapped.nodes) {
                     if (node.metadata?.commerceAsset?.projectId === restored.restored_from) node.metadata.commerceAsset.projectId = restored.id;
+                    if (node.metadata?.commerceSource?.projectId === restored.restored_from) node.metadata.commerceSource.projectId = restored.id;
                 }
                 const newCanvasId = importProject(remapped);
                 await localforage.setItem(`commerce-studio:${newCanvasId}`, restored.id);
