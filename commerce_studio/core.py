@@ -160,6 +160,35 @@ class Store:
             tmp.write_text(json.dumps(project, ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(path)
 
+    def reconcile_interrupted_tasks(self):
+        changed = 0
+        with self.lock:
+            for item in self.list():
+                project = self.load(item["id"])
+                interrupted = False
+                for task in project["tasks"]:
+                    if task.get("status") in ("已排队", "上传素材", "远端运行中", "待下载"):
+                        task["status"] = "待核对"
+                        task["interrupted_at"] = stamp()
+                        task["updated"] = stamp()
+                        interrupted = True
+                        changed += 1
+                if interrupted:
+                    self.save(project)
+        return changed
+
+    def resolve_unidentified_task(self, project, task_id, note):
+        task = next((item for item in project["tasks"] if item.get("id") == task_id), None)
+        if not task or task.get("status") != "待核对" or task.get("remote_id"):
+            raise ValueError("仅可核对没有远端标识的待核对任务")
+        if not isinstance(note, str) or not note.strip():
+            raise ValueError("请记录供应商后台核对结果")
+        task["status"] = "失败"
+        task["manual_resolution"] = {"outcome": "远端无此任务", "note": note.strip(), "at": stamp()}
+        task["updated"] = stamp()
+        self.save(project)
+        return task
+
     def set_cost_target(self, project, amount, currency):
         if amount is None:
             project["cost_target"] = None

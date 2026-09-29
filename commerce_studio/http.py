@@ -186,6 +186,8 @@ class Handler(BaseHTTPRequestHandler):
                     return STORE.settle_cost(project, parts[4], body.get("amount"), body.get("currency"), body.get("receipt"))
                 if parts[3:] == ["costs", "target"]:
                     return STORE.set_cost_target(project, body.get("amount"), body.get("currency"))
+                if len(parts) == 6 and parts[3] == "tasks" and parts[5] == "resolve-unidentified":
+                    return STORE.resolve_unidentified_task(project, parts[4], body.get("note"))
                 if parts[3:] == ["gallery", "default"]:
                     return gallery.default_plan(STORE, project)
                 if parts[3:] == ["gallery", "plans"]:
@@ -267,6 +269,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     port = int(os.environ.get("COMMERCE_STUDIO_PORT", "8766"))
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    STORE.reconcile_interrupted_tasks()
     print(f"Commerce Studio bridge: http://127.0.0.1:{port}")
     server.serve_forever()
 

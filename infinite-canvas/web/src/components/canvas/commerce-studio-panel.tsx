@@ -49,6 +49,8 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
     const [comparison, setComparison] = useState<{ original: string; generated: string } | null>(null);
     const [factsOffer, setFactsOffer] = useState<{ sourceId: string; quote: StudioQuote } | null>(null);
     const [previewSourceId, setPreviewSourceId] = useState<string | null>(null);
+    const [resolvingTaskId, setResolvingTaskId] = useState<string | null>(null);
+    const [resolutionNote, setResolutionNote] = useState("");
 
     useEffect(() => { setPreviewQuote(null); setPreviewRequest(null); }, [nodes, connections, selectedNodeId, previewRatio]);
 
@@ -183,7 +185,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                                 <Button disabled={busy || !project.brief_versions.length || !candidateSourceId || !viewPreset.trim()} onClick={() => void act(async () => { setMasterQuote(await studioApi.masterQuote(project.id, masterRequest)); })}>查看本次输入与费用</Button>
                                 {masterQuote ? <><Typography.Paragraph>输入版本：{String((masterQuote.input_snapshot as { brief_id?: string }).brief_id || "—").slice(0, 12)}；预估费用：{masterQuote.estimate == null ? "未知" : masterQuote.estimate}；计价来源：{masterQuote.pricing_source}</Typography.Paragraph><Button type="primary" disabled={busy} onClick={() => void act(async () => { await studioApi.masterRun(project.id, { ...masterRequest, approved_fingerprint: masterQuote.fingerprint, request_id: crypto.randomUUID() }); setMasterQuote(null); })}>确认提交 SeeAny</Button></> : null}
                             </Space>
-                            {project.tasks.filter((task) => task.kind === "master").map((task) => <div key={task.id} className="mt-2"><Tag>{task.status}</Tag>第 {task.candidate_group} 组 · {task.view_label} <Button type="link" disabled={busy} onClick={() => void act(() => studioApi.sync(project.id, task.id))}>同步状态</Button></div>)}
+                            {project.tasks.filter((task) => task.kind === "master").map((task) => <div key={task.id} className="mt-2"><Tag>{task.status}</Tag>第 {task.candidate_group} 组 · {task.view_label} <Button type="link" disabled={busy || !task.remote_id} onClick={() => void act(() => studioApi.sync(project.id, task.id))}>同步状态</Button></div>)}
                         </section>
                         <section>
                             <Typography.Title level={5}>三视图母版审核</Typography.Title>
@@ -238,8 +240,13 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                         </section>
                         <section>
                             <Typography.Title level={5}>试图任务</Typography.Title>
-                            {project.tasks.filter((task) => task.kind === "preview").map((task) => <div key={task.id} className="mt-2"><Tag>{task.status}</Tag>画布试图 <Button type="link" disabled={busy} onClick={() => void act(() => studioApi.sync(project.id, task.id))}>同步状态</Button>{task.asset_ids?.length && task.source_id ? <Button type="link" onClick={() => void (async () => { try { const [original, generated] = await Promise.all([studioApi.sourceData(project.id, task.source_id!), studioApi.sourceData(project.id, task.asset_ids![0])]); setComparison({ original: original.data_url, generated: generated.data_url }); } catch (cause) { setError(cause instanceof Error ? cause.message : "读取图片失败"); } })()}>对照查看</Button> : null}</div>)}
+                            {project.tasks.filter((task) => task.kind === "preview").map((task) => <div key={task.id} className="mt-2"><Tag>{task.status}</Tag>画布试图 <Button type="link" disabled={busy || !task.remote_id} onClick={() => void act(() => studioApi.sync(project.id, task.id))}>同步状态</Button>{task.asset_ids?.length && task.source_id ? <Button type="link" onClick={() => void (async () => { try { const [original, generated] = await Promise.all([studioApi.sourceData(project.id, task.source_id!), studioApi.sourceData(project.id, task.asset_ids![0])]); setComparison({ original: original.data_url, generated: generated.data_url }); } catch (cause) { setError(cause instanceof Error ? cause.message : "读取图片失败"); } })()}>对照查看</Button> : null}</div>)}
                         </section>
+                        {project.tasks.some((task) => task.status === "待核对" && !task.remote_id) ? <section>
+                            <Typography.Title level={5}>中断任务核对</Typography.Title>
+                            <Typography.Paragraph type="secondary">以下任务没有可信的远端标识。请先在供应商后台检查；确认不存在对应任务后，可记录核对依据并标记失败。此操作不会自动重新提交或改变费用流水。</Typography.Paragraph>
+                            {project.tasks.filter((task) => task.status === "待核对" && !task.remote_id).map((task) => <div key={task.id} className="mt-2 border-t pt-2"><Tag>{task.provider}</Tag>{task.kind || "任务"} · {task.id.slice(0, 12)}{task.interrupted_at ? " · 本机运行中断" : " · 提交结果不明"}<Button type="link" disabled={busy} onClick={() => { setResolvingTaskId(task.id); setResolutionNote(""); }}>记录核对结果</Button>{resolvingTaskId === task.id ? <div><Input.TextArea rows={2} value={resolutionNote} onChange={(event) => setResolutionNote(event.target.value)} placeholder="填写供应商后台核对依据，确认远端没有该任务" /><Button type="primary" disabled={busy || !resolutionNote.trim()} onClick={() => void act(async () => { await studioApi.resolveUnidentifiedTask(project.id, task.id, resolutionNote); setResolvingTaskId(null); setResolutionNote(""); })}>确认远端无此任务，标记失败</Button><Button onClick={() => setResolvingTaskId(null)}>取消</Button></div> : null}</div>)}
+                        </section> : null}
                         <CommerceCostSection project={project} busy={busy} act={act} nodeNames={nodeNames} />
                         <section><Typography.Title level={5}>项目备份</Typography.Title><Typography.Paragraph type="secondary">将当前画布、浏览器媒体文件、本地原图、版本和任务记录一起打包。恢复入口位于画布列表的“导入”。</Typography.Paragraph><Button disabled={busy} onClick={() => void act(exportWholeProject)}>下载完整项目备份</Button></section>
                     </>

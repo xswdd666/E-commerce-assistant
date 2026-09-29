@@ -38,7 +38,7 @@ export type StudioProject = {
     costs: StudioCost[];
     cost_target: { amount: number; currency: string } | null;
     external: { flova_project_id: string; flova_project_url: string };
-    tasks: Array<{ id: string; provider: string; kind?: string; status: string; estimate: number | null; actual: number | null; candidate_group?: number; view_label?: string; asset_ids?: string[]; source_id?: string; input_snapshot?: { item?: { id: string }; version_id?: string; shot_id?: string; storyboard_id?: string }; error?: string; pending_actions?: Array<{ type?: string; message?: string; blocking?: boolean }> }>;
+    tasks: Array<{ id: string; provider: string; kind?: string; status: string; remote_id?: string | null; estimate: number | null; actual: number | null; candidate_group?: number; view_label?: string; asset_ids?: string[]; source_id?: string; input_snapshot?: { item?: { id: string }; version_id?: string; shot_id?: string; storyboard_id?: string }; error?: string; interrupted_at?: string; manual_resolution?: { outcome: string; note: string; at: string }; pending_actions?: Array<{ type?: string; message?: string; blocking?: boolean }> }>;
     chat: Array<{ id: string; prompt: string; reply: string; brief_id?: string; created: string }>;
 };
 
@@ -125,6 +125,7 @@ export const studioApi = {
     videoEditRender: (id: string, edit_id: string) => request(`/projects/${id}/finishing/render`, { edit_id }),
     settleCost: (id: string, taskId: string, amount: number, currency: string, receipt: string) => request(`/projects/${id}/costs/${taskId}/settle`, { amount, currency, receipt }),
     setCostTarget: (id: string, amount: number | null, currency: string) => request(`/projects/${id}/costs/target`, { amount, currency }),
+    resolveUnidentifiedTask: (id: string, taskId: string, note: string) => request(`/projects/${id}/tasks/${taskId}/resolve-unidentified`, { note }),
     galleryDefault: (id: string) => request<GalleryPlan>(`/projects/${id}/gallery/default`, {}),
     gallerySave: (id: string, items: Array<Omit<GalleryItem, "id"> | GalleryItem>, parent_id: string | null) => request<GalleryPlan>(`/projects/${id}/gallery/plans`, { items, parent_id }),
     galleryApprove: (id: string, plan_id: string) => request<GalleryPlan>(`/projects/${id}/gallery/plans/approve`, { plan_id }),

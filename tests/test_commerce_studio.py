@@ -616,6 +616,25 @@ class CommerceStudioTests(unittest.TestCase):
         self.assertEqual(entry["status"], "失败")
         self.assertIsNone(self.store.set_cost_target(self.project, None, ""))
 
+    def test_restart_marks_inflight_tasks_for_review_without_resubmitting(self):
+        self.project["tasks"].extend([
+            {"id": "unknown-run", "kind": "preview", "provider": "SeeAny", "status": "远端运行中", "remote_id": None, "idempotency_key": "request-123"},
+            {"id": "known-run", "kind": "video", "provider": "Flova", "status": "远端运行中", "remote_id": "flova-456"},
+        ])
+        self.store.save(self.project)
+        self.assertEqual(self.store.reconcile_interrupted_tasks(), 2)
+        self.assertEqual(self.store.reconcile_interrupted_tasks(), 0)
+        project = self.store.load(self.project["id"])
+        self.assertTrue(all(task["status"] == "待核对" for task in project["tasks"]))
+        with self.assertRaisesRegex(ValueError, "没有远端标识"):
+            self.store.resolve_unidentified_task(project, "known-run", "已核对")
+        with self.assertRaisesRegex(ValueError, "核对结果"):
+            self.store.resolve_unidentified_task(project, "unknown-run", "")
+        resolved = self.store.resolve_unidentified_task(project, "unknown-run", "供应商后台无对应任务")
+        self.assertEqual(resolved["status"], "失败")
+        self.assertEqual(resolved["idempotency_key"], "request-123")
+        self.assertEqual(len(project["tasks"]), 2)
+
     def test_supplier_bill_reconciliation_preserves_original_units_and_corrections(self):
         task = {"id": "cost-task", "kind": "preview", "provider": "SeeAny", "status": "失败",
                 "estimate": None, "actual": None, "currency": None, "created": "2026-09-29T00:00:00+00:00"}
