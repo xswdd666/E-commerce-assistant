@@ -10,6 +10,7 @@ export type PromptVersion = { id: string; parent_id: string | null; brief_id: st
 export type StudioProject = {
     id: string;
     name: string;
+    legacy_import?: { id: string; imported_at: string; review_required: string; archive: unknown };
     sources: StudioSource[];
     facts: StudioFact[];
     brief_versions: Array<{ id: string; facts: StudioFact[] }>;
@@ -53,6 +54,8 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
 
 export const studioApi = {
     health: () => request<{ ok: boolean; deepseek: boolean; seeany: boolean; flova: boolean }>("/health"),
+    legacyProjects: () => request<Array<{ id: string; name: string; sources: number; facts: number }>>("/legacy/projects"),
+    legacyImport: (id: string) => request<StudioProject>("/legacy/import", { id }),
     create: (name: string) => request<StudioProject>("/projects", { name }),
     get: (id: string) => request<StudioProject>(`/projects/${id}`),
     source: (id: string, file: File) =>

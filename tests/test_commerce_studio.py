@@ -3,6 +3,8 @@ import io
 import hashlib
 import json
 import shutil
+import sqlite3
+from contextlib import closing
 import subprocess
 import tempfile
 import threading
@@ -17,7 +19,7 @@ from PIL import Image
 
 from commerce_studio.core import Store
 from commerce_studio import service
-from commerce_studio import backup, delivery, finishing, flova_flow, gallery, http as bridge, prompts, video_export
+from commerce_studio import backup, delivery, finishing, flova_flow, gallery, http as bridge, legacy, prompts, video_export
 
 
 class CommerceStudioTests(unittest.TestCase):
@@ -28,6 +30,31 @@ class CommerceStudioTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_legacy_import_copies_sources_and_facts_without_touching_old_project(self):
+        root = Path(self.temp.name)
+        db_path = root / "old.sqlite3"
+        files = root / "old-files"
+        old_id = "a" * 12
+        (files / old_id).mkdir(parents=True)
+        raw = b"legacy image"
+        (files / old_id / f"{'b' * 12}.png").write_bytes(raw)
+        old = {"id": old_id, "name": "旧项目", "updated": "2026-09-29", "sources": [{"id": "b" * 12,
+               "name": "front.png", "path": f"{'b' * 12}.png", "mime": "image/png", "sha256": hashlib.sha256(raw).hexdigest()}],
+               "facts": [{"id": "c" * 12, "field": "颜色", "value": "银色", "status": "已知事实", "source_ids": ["b" * 12]}],
+               "masters": [{"id": "d" * 12}], "settings": {"unattended_limit": 30}}
+        with closing(sqlite3.connect(db_path)) as db:
+            db.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, updated TEXT, state TEXT)")
+            db.execute("INSERT INTO projects VALUES (?,?,?,?)", (old_id, old["name"], old["updated"], json.dumps(old)))
+            db.commit()
+        self.assertEqual(len(legacy.list_projects(db_path)), 1)
+        imported = legacy.import_project(self.store, db_path, files, old_id)
+        self.assertEqual(self.store.source_bytes(imported, imported["sources"][0]["id"])[1], raw)
+        self.assertEqual(imported["facts"][0]["status"], "已知事实")
+        self.assertEqual(imported["master_versions"], [])
+        self.assertEqual(imported["legacy_import"]["archive"]["masters"], old["masters"])
+        self.assertEqual(legacy.import_project(self.store, db_path, files, old_id)["id"], imported["id"])
+        self.assertEqual((files / old_id / f"{'b' * 12}.png").read_bytes(), raw)
 
     def approved_project(self):
         source = self.store.add_source(self.project, "front.png", "image/png", base64.b64encode(b"image bytes").decode())

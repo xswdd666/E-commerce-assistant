@@ -67,7 +67,8 @@ class Store:
         return project
 
     def list(self):
-        return [{"id": p["id"], "name": p["name"], "updated": p["updated"]} for path in self.root.glob("*.json")
+        return [{"id": p["id"], "name": p["name"], "updated": p["updated"], "legacy_id": p.get("legacy_id")}
+                for path in self.root.glob("*.json")
                 if (p := json.loads(path.read_text(encoding="utf-8")))]
 
     def load(self, project_id):

@@ -22,6 +22,8 @@ type Props = { open: boolean; onClose: () => void; canvasId: string; title: stri
 
 export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, connections, selectedNodeId, onInsertImage, onInsertText }: Props) {
     const [project, setProject] = useState<StudioProject | null>(null);
+    const [legacyProjects, setLegacyProjects] = useState<Array<{ id: string; name: string; sources: number; facts: number }>>([]);
+    const [legacyId, setLegacyId] = useState<string>();
     const [health, setHealth] = useState<{ deepseek: boolean; seeany: boolean; flova: boolean } | null>(null);
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
@@ -52,6 +54,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                 setHealth(await studioApi.health());
                 const id = await localforage.getItem<string>(`commerce-studio:${canvasId}`);
                 setProject(id ? await studioApi.get(id) : null);
+                if (!id) setLegacyProjects(await studioApi.legacyProjects());
                 setError("");
             } catch (cause) {
                 setError(cause instanceof Error ? cause.message : "无法连接本地服务");
@@ -108,9 +111,24 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                             } catch (cause) { setError(cause instanceof Error ? cause.message : "创建失败"); }
                             finally { setBusy(false); }
                         })()}>创建商品项目</Button>
+                        {legacyProjects.length ? <div className="mt-4">
+                            <Typography.Paragraph type="secondary">旧原型项目可只读复制资料与事实；旧版母版和成品保存在历史快照中，须重新审核后才能用于新任务。</Typography.Paragraph>
+                            <Space direction="vertical" className="w-full"><Select className="w-full" placeholder="选择旧项目" value={legacyId} onChange={setLegacyId} options={legacyProjects.map((item) => ({ value: item.id, label: `${item.name} · ${item.sources} 份资料 · ${item.facts} 条事实` }))} />
+                                <Button disabled={busy || !legacyId} onClick={() => void (async () => {
+                                    setBusy(true);
+                                    try {
+                                        const imported = await studioApi.legacyImport(legacyId!);
+                                        await localforage.setItem(`commerce-studio:${canvasId}`, imported.id);
+                                        setProject(imported);
+                                        setError("");
+                                    } catch (cause) { setError(cause instanceof Error ? cause.message : "导入失败"); }
+                                    finally { setBusy(false); }
+                                })()}>导入旧原型项目</Button></Space>
+                        </div> : null}
                     </section>
                 ) : (
                     <>
+                        {project.legacy_import ? <section><Typography.Paragraph type="warning">已从旧原型导入。{project.legacy_import.review_required}；旧预算设置不会阻止新任务。</Typography.Paragraph><Button onClick={() => saveAs(new Blob([JSON.stringify(project.legacy_import?.archive, null, 2)], { type: "application/json" }), `${project.name}-旧原型历史.json`)}>下载旧项目历史快照</Button></section> : null}
                         <section>
                             <Typography.Title level={5}>原始资料</Typography.Title>
                             <input type="file" accept="image/*,text/plain,application/pdf,.docx" disabled={busy} onChange={(event) => {

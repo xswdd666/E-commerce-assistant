@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .core import Store
-from . import backup, delivery, finishing, flova_flow, gallery, prompts, service, video_export
+from . import backup, delivery, finishing, flova_flow, gallery, legacy, prompts, service, video_export
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -75,6 +75,11 @@ class Handler(BaseHTTPRequestHandler):
                     "seeany": bool(service.provider_key("SEEANY_API_KEY")), "flova": service.flova.executable() is not None}
         if method == "GET" and parts == ["api", "projects"]:
             return STORE.list()
+        if method == "GET" and parts == ["api", "legacy", "projects"]:
+            return legacy.list_projects(ROOT / "data" / "workbench.sqlite3")
+        if method == "POST" and parts == ["api", "legacy", "import"]:
+            with STORE.lock:
+                return legacy.import_project(STORE, ROOT / "data" / "workbench.sqlite3", ROOT / "data" / "files", self._body().get("id"))
         if method == "POST" and parts == ["api", "projects"]:
             return STORE.create(self._body().get("name"))
         if len(parts) < 3 or parts[:2] != ["api", "projects"]:
