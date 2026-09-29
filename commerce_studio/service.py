@@ -295,7 +295,7 @@ def run_preview(store, project, body):
         raise ValueError("缺少 SeeAny API Key")
     snapshot = offer["input_snapshot"]
     mime, raw = _preview_reference(body)
-    task = {"id": ident(), "kind": "preview", "provider": "SeeAny", "status": "远端运行中",
+    task = {"id": ident(), "kind": "preview", "node_id": snapshot["config_node_id"], "provider": "SeeAny", "status": "远端运行中",
             "idempotency_key": request_id, "input_snapshot": snapshot, "estimate": None, "actual": None,
             "currency": None, "remote_id": None, "attempts": 1, "created": stamp(), "updated": stamp()}
     project["tasks"].append(task)

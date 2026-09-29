@@ -729,6 +729,8 @@ class CommerceStudioTests(unittest.TestCase):
         payload = submit.call_args.args[2]
         self.assertEqual(payload["prompt"], "白底实拍风格")
         self.assertEqual(task["input_snapshot"]["connection_ids"], ["edge-image", "edge-text"])
+        self.assertEqual(task["node_id"], "config-1")
+        self.assertEqual(next(cost for cost in self.project["costs"] if cost["task_id"] == task["id"])["node_id"], "config-1")
         source, raw = self.store.source_bytes(self.project, task["source_id"])
         self.assertEqual(source["canvas_node_id"], "image-1")
         self.assertEqual(raw, master_raw)

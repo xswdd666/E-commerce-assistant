@@ -83,6 +83,10 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
 
     const selected = nodes.find((node) => node.id === selectedNodeId);
     const inputs = connections.filter((connection) => connection.toNodeId === selectedNodeId).map((connection) => nodes.find((node) => node.id === connection.fromNodeId)).filter((node): node is CanvasNodeData => Boolean(node));
+    const nodeNames = Object.fromEntries(nodes.map((node) => [node.id, node.title || node.type]));
+    const selectedCosts = project?.costs.filter((cost) => selectedNodeId && cost.node_id === selectedNodeId) || [];
+    const selectedSpend = new Map<string, number>();
+    for (const cost of selectedCosts) if (cost.actual != null && cost.currency) selectedSpend.set(cost.currency, (selectedSpend.get(cost.currency) || 0) + cost.actual);
     const confirmed = project?.facts.filter((fact) => fact.status === "已知事实") || [];
     const masterRequest: MasterRequest = { group: candidateGroup, view_label: viewLabel, views: viewPreset, source_id: candidateSourceId || "" };
     const candidates = project?.sources.filter((source) => source.origin === "SeeAny candidate") || [];
@@ -216,6 +220,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                             <Typography.Title level={5}>画布输入</Typography.Title>
                             <Typography.Paragraph>{selected ? `当前节点：${selected.title || selected.type}` : "选择一个画布节点查看其输入依赖"}</Typography.Paragraph>
                             {inputs.length ? inputs.map((node) => <Tag key={node.id}>{node.type} · {node.title || node.id}</Tag>) : <Typography.Text type="secondary">等待连接</Typography.Text>}
+                            {selected ? <Typography.Paragraph className="mt-2">节点费用：{selectedCosts.length} 笔任务；已确认实付 {selectedSpend.size ? [...selectedSpend].map(([unit, amount]) => `${amount.toFixed(2)} ${unit}`).join("、") : "暂无"}；待结算 {selectedCosts.filter((cost) => cost.actual == null).length} 笔；预估未知 {selectedCosts.filter((cost) => cost.estimate == null).length} 笔。</Typography.Paragraph> : null}
                             <Typography.Paragraph type="secondary" className="mt-2">连线仅编辑画布。任务提交前需查看实际输入和费用；未知费用不会自动提交。</Typography.Paragraph>
                             {selected?.type === CanvasNodeType.Config ? <Space direction="vertical" className="mt-2 w-full">
                                 <Select value={previewRatio} onChange={setPreviewRatio} options={["1:1", "3:4", "4:3", "9:16", "16:9", "3:2", "2:3"].map((ratio) => ({ value: ratio, label: ratio }))} />
@@ -235,7 +240,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                             <Typography.Title level={5}>试图任务</Typography.Title>
                             {project.tasks.filter((task) => task.kind === "preview").map((task) => <div key={task.id} className="mt-2"><Tag>{task.status}</Tag>画布试图 <Button type="link" disabled={busy} onClick={() => void act(() => studioApi.sync(project.id, task.id))}>同步状态</Button>{task.asset_ids?.length && task.source_id ? <Button type="link" onClick={() => void (async () => { try { const [original, generated] = await Promise.all([studioApi.sourceData(project.id, task.source_id!), studioApi.sourceData(project.id, task.asset_ids![0])]); setComparison({ original: original.data_url, generated: generated.data_url }); } catch (cause) { setError(cause instanceof Error ? cause.message : "读取图片失败"); } })()}>对照查看</Button> : null}</div>)}
                         </section>
-                        <CommerceCostSection project={project} busy={busy} act={act} />
+                        <CommerceCostSection project={project} busy={busy} act={act} nodeNames={nodeNames} />
                         <section><Typography.Title level={5}>项目备份</Typography.Title><Typography.Paragraph type="secondary">将当前画布、浏览器媒体文件、本地原图、版本和任务记录一起打包。恢复入口位于画布列表的“导入”。</Typography.Paragraph><Button disabled={busy} onClick={() => void act(exportWholeProject)}>下载完整项目备份</Button></section>
                     </>
                 )}
