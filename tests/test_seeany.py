@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app import server
+from app import server, seeany
 
 
 class SeeAnyWorkflowTests(unittest.TestCase):
@@ -38,6 +38,17 @@ class SeeAnyWorkflowTests(unittest.TestCase):
         quote = server.seeany_quote(self.p, {"kind": "master", "source_ids": [self.source["id"]], "views": "front", "view_label": "正面", "group": 1})
         self.assertIn("费用未知", quote["reason"])
         self.assertNotIn("test-only-key", str(self.p))
+
+    def test_result_assets_reads_completed_work_images(self):
+        task = {"id": "task-result", "provider": "SeeAny", "remote_id": "remote-result", "status": "远端运行中", "reason": "", "imported_urls": [], "description": "试图", "source_ids": [self.source["id"]], "input_versions": {}, "seeany_kind": "preview"}
+        self.p["tasks"].append(task)
+        response = {"code": 0, "msg": "success", "data": {"task_uuid": "remote-result", "status": "succeeded", "assets": [{"work_uuid": "work-123", "images": [{"url": "https://img1.seeany.com/final-image.png", "preview": "https://img1.seeany.com/preview-image.png", "width": 1024, "height": 1024}]}]}}
+        with patch.object(seeany, "task_status", return_value=response), patch.object(seeany, "download_image", return_value=(b"image bytes", ".png")) as download:
+            result = server.sync_seeany(self.p, task["id"])
+        self.assertEqual(result["remote_status"], "succeeded")
+        self.assertEqual(result["imported"], 1)
+        self.assertEqual(len(self.p["assets"]), 1)
+        download.assert_called_once_with("https://img1.seeany.com/final-image.png")
 
     def test_master_submit_and_status_import_are_idempotent(self):
         body = {"kind": "master", "source_ids": [self.source["id"]], "views": "front", "view_label": "正面", "group": 1, "estimate": "1"}

@@ -83,19 +83,19 @@ def task_status(key, task_uuid, *, transport=urlopen):
 def result_assets(value):
     """Collect final asset URLs from documented status/callback result shapes."""
     found = []
-    def walk(node):
+    containers = ("data", "task", "result", "works", "results", "items", "outputs", "assets", "images")
+
+    def walk(node, inside_assets=False):
         if isinstance(node, dict):
-            assets = node.get("assets")
-            if isinstance(assets, list):
-                for asset in assets:
-                    if isinstance(asset, dict) and asset.get("url"):
-                        found.append(asset["url"])
-            for key in ("data", "task", "result", "works", "results", "items", "outputs"):
+            url = node.get("url")
+            if inside_assets and isinstance(url, str) and url.startswith(("https://", "http://")):
+                found.append(url)
+            for key in containers:
                 if key in node:
-                    walk(node[key])
+                    walk(node[key], inside_assets or key in ("works", "results", "items", "outputs", "assets", "images"))
         elif isinstance(node, list):
             for item in node:
-                walk(item)
+                walk(item, inside_assets)
     walk(value)
     return list(dict.fromkeys(found))
 
