@@ -1,0 +1,4 @@
+interface:
+  display_name: "SeeAny API"
+  short_description: "发现并调用 SeeAny 开发者文档中的全部公开接口"
+  default_prompt: "使用 $seeany-api 查找合适的 SeeAny 能力并完成 API 调用。"
