@@ -21,8 +21,8 @@ def quote(store, project, original_id, candidate_id):
     candidate, raw_candidate = store.source_bytes(project, candidate_id)
     if original_id == candidate_id or original["mime"] not in MIMES or candidate["mime"] not in MIMES:
         raise ValueError("请选择不同的原始实拍和候选图片")
-    if original.get("origin", "").startswith("SeeAny") or not candidate.get("origin", "").startswith("SeeAny"):
-        raise ValueError("图片观察必须对照原始实拍与 SeeAny 候选图")
+    if original.get("origin") or not (candidate.get("origin", "").startswith("SeeAny") or candidate.get("origin") == "GPT import"):
+        raise ValueError("图片观察必须对照原始实拍与生成候选图")
     if 4 * (len(raw_original) + len(raw_candidate)) // 3 >= 48 * 1024 * 1024:
         raise ValueError("两张图片超过 DeepSeek 图文请求大小，请先导入较小图片")
     brief = project["brief_versions"][-1]

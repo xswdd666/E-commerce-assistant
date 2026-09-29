@@ -13,15 +13,15 @@ export function CommerceObservationSection({ project, busy, act }: Props) {
     const [preview, setPreview] = useState<{ original: string; candidate: string }>();
     const [editing, setEditing] = useState("");
     const [correction, setCorrection] = useState("");
-    const originals = project.sources.filter((source) => source.mime.startsWith("image/") && !source.origin?.startsWith("SeeAny"));
-    const candidates = project.sources.filter((source) => source.mime.startsWith("image/") && source.origin?.startsWith("SeeAny"));
+    const originals = project.sources.filter((source) => source.mime.startsWith("image/") && !source.origin);
+    const candidates = project.sources.filter((source) => source.mime.startsWith("image/") && (source.origin?.startsWith("SeeAny") || source.origin === "GPT import"));
 
     return <section>
         <Typography.Title level={5}>候选图观察</Typography.Title>
         <Typography.Paragraph type="secondary">DeepSeek 对照实拍逐项描述差异；模型判断仅供参考，不会自动修改产品事实或批准图片。</Typography.Paragraph>
         <Space direction="vertical" className="w-full">
             <Select className="w-full" placeholder="选择原始实拍" value={originalId} onChange={(id) => { setOriginalId(id); setQuote(undefined); setPreview(undefined); }} options={originals.map((source) => ({ value: source.id, label: source.name }))} />
-            <Select className="w-full" placeholder="选择 SeeAny 候选图" value={candidateId} onChange={(id) => { setCandidateId(id); setQuote(undefined); setPreview(undefined); }} options={candidates.map((source) => ({ value: source.id, label: source.name }))} />
+            <Select className="w-full" placeholder="选择 SeeAny 或 GPT 候选图" value={candidateId} onChange={(id) => { setCandidateId(id); setQuote(undefined); setPreview(undefined); }} options={candidates.map((source) => ({ value: source.id, label: source.name }))} />
             <Button disabled={busy || !originalId || !candidateId || !project.brief_versions.length} onClick={() => void act(async () => {
                 const [offer, original, candidate] = await Promise.all([studioApi.observationQuote(project.id, originalId!, candidateId!), studioApi.sourceData(project.id, originalId!), studioApi.sourceData(project.id, candidateId!)]);
                 setQuote(offer);

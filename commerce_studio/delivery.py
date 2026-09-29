@@ -20,6 +20,7 @@ def export_delivery(store, project, video_id):
         raise ValueError("视频文件为空")
     adopted = project.get("prompt_adoption")
     prompt = next((v for v in project.get("prompt_versions", []) if adopted and v["id"] == adopted["version_id"]), None)
+    adopted_source = next((s for s in project["sources"] if adopted and s["id"] == adopted["source_id"]), None)
     script = next((v for v in project.get("script_versions", []) if v["id"] == project.get("script_approval")), None)
     storyboard = next((v for v in project.get("storyboard_versions", []) if v["id"] == project.get("storyboard_approval")), None)
     if not script or not storyboard:
@@ -48,6 +49,9 @@ def export_delivery(store, project, video_id):
             target.writestr("交付/套图来源清单.json", source.read("source-manifest.json"))
         target.writestr("交付/已确认脚本.txt", script["text"].encode("utf-8"))
         target.writestr("交付/已确认分镜.json", json.dumps(storyboard, ensure_ascii=False, indent=2))
-        target.writestr("交付/采用提示词.json", json.dumps(prompt or {}, ensure_ascii=False, indent=2))
+        prompt_record = {"context_version": prompt, "actual_generation_prompt": adopted_source.get("import_prompt") if adopted_source and adopted_source.get("import_prompt") else prompt["text"] if prompt else None,
+                         "image_origin": adopted_source.get("origin") if adopted_source else None,
+                         "reference_ids": adopted_source.get("reference_ids", []) if adopted_source else []}
+        target.writestr("交付/采用提示词.json", json.dumps(prompt_record, ensure_ascii=False, indent=2))
         target.writestr("交付/交付清单.json", json.dumps(manifest, ensure_ascii=False, indent=2))
     return output.getvalue()

@@ -418,6 +418,12 @@ class CommerceStudioTests(unittest.TestCase):
 
     def test_delivery_package_contains_video_gallery_and_provenance(self):
         self.approved_project()
+        fields = {"product": "白色杯体", "scene": "厨房", "composition": "居中", "lighting": "日光", "negative": "结构不变", "ratio": "1:1"}
+        version = prompts.save_version(self.store, self.project, fields)
+        gpt_image = io.BytesIO()
+        Image.new("RGB", (64, 64), "white").save(gpt_image, format="PNG")
+        imported = prompts.import_preview(self.store, self.project, version["id"], self.project["master_versions"][-1]["asset_ids"][0], "gpt.png", "image/png", base64.b64encode(gpt_image.getvalue()).decode(), "GPT 实际生成提示词")
+        prompts.review_preview(self.store, self.project, version["id"], imported["id"], "采用")
         plan = gallery.default_plan(self.store, self.project)
         gallery.approve_plan(self.store, self.project, plan["id"])
         with self.assertRaisesRegex(ValueError, "请选择"):
@@ -448,6 +454,9 @@ class CommerceStudioTests(unittest.TestCase):
             self.assertEqual(sum(name.endswith(".png") for name in names), 6)
             self.assertEqual(archive.read("交付/已确认脚本.txt").decode(), "已确认广告脚本")
             self.assertEqual(json.loads(archive.read("交付/交付清单.json"))["video_id"], video_id)
+            provenance = json.loads(archive.read("交付/采用提示词.json"))
+            self.assertEqual(provenance["actual_generation_prompt"], "GPT 实际生成提示词")
+            self.assertEqual(provenance["reference_ids"], imported["reference_ids"])
 
     def test_video_is_not_submitted_without_verified_flova_reference_upload(self):
         source = self.approved_project()
@@ -622,6 +631,26 @@ class CommerceStudioTests(unittest.TestCase):
         prompts.review_preview(self.store, self.project, versions[0]["id"], source_id, "采用")
         self.assertEqual(self.project["prompt_adoption"]["source_id"], source_id)
         self.assertEqual(self.project["sources"][-1]["reference_ids"], [reference_id])
+
+    def test_imported_gpt_image_keeps_actual_prompt_and_requires_review(self):
+        original = self.approved_project()
+        fields = {"product": "白色杯体", "scene": "厨房", "composition": "居中", "lighting": "日光", "negative": "结构不变", "ratio": "1:1"}
+        version = prompts.save_version(self.store, self.project, fields)
+        reference_id = self.project["master_versions"][-1]["asset_ids"][0]
+        image = io.BytesIO()
+        Image.new("RGB", (64, 64), "white").save(image, format="PNG")
+        picture = base64.b64encode(image.getvalue()).decode()
+        with self.assertRaisesRegex(ValueError, "实际使用"):
+            prompts.import_preview(self.store, self.project, version["id"], reference_id, "gpt.png", "image/png", picture, "")
+        with self.assertRaisesRegex(ValueError, "有效图片"):
+            prompts.import_preview(self.store, self.project, version["id"], reference_id, "gpt.png", "image/png", base64.b64encode(b"broken").decode(), "GPT 实际提示词")
+        imported = prompts.import_preview(self.store, self.project, version["id"], reference_id, "gpt.png", "image/png", picture, "GPT 实际提示词")
+        self.assertEqual(imported["reference_ids"], [reference_id])
+        self.assertEqual(imported["import_prompt"], "GPT 实际提示词")
+        self.assertIsNone(self.project["prompt_adoption"])
+        self.assertEqual(observations.quote(self.store, self.project, original["id"], imported["id"])["provider"], "DeepSeek")
+        review = prompts.review_preview(self.store, self.project, version["id"], imported["id"], "采用")
+        self.assertEqual(self.project["prompt_adoption"]["review_id"], review["id"])
 
     def test_canvas_preview_uses_snapshot_and_saves_original_reference(self):
         self.approved_project()

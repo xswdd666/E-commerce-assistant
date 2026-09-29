@@ -1,6 +1,6 @@
 const BASE = "http://127.0.0.1:8766/api";
 
-export type StudioSource = { id: string; name: string; mime: string; bytes: number; extracted_text?: string; parse_status?: string; origin?: string; candidate_group?: number; view_label?: string; reference_ids?: string[]; gallery_plan_id?: string; gallery_item_id?: string; prompt_version_id?: string };
+export type StudioSource = { id: string; name: string; mime: string; bytes: number; extracted_text?: string; parse_status?: string; origin?: string; import_prompt?: string; candidate_group?: number; view_label?: string; reference_ids?: string[]; gallery_plan_id?: string; gallery_item_id?: string; prompt_version_id?: string };
 export type StudioFact = { id: string; field: string; value: string; source_id?: string; status: "待核实" | "已知事实" | "创意假设" };
 export type InferredDetail = { id: string; text: string; status: "待核实" | "已核实"; evidence_source_id: string | null };
 export type ImageObservation = { id: string; task_id: string; original_id: string; candidate_id: string; brief_id: string; fields: Record<string, string>; corrections: Array<{ id: string; field: string; text: string; at: string }>; created: string };
@@ -161,5 +161,11 @@ export const studioApi = {
     promptChangeRun: (id: string, parent_id: string, changed_fields: string[], instruction: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/prompts/changes/run`, { parent_id, changed_fields, instruction, approved_fingerprint, request_id }),
     promptPreviewQuote: (id: string, version_id: string, reference_id: string) => request<StudioQuote>(`/projects/${id}/prompts/preview/quote`, { version_id, reference_id }),
     promptPreviewRun: (id: string, version_id: string, reference_id: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/prompts/preview/run`, { version_id, reference_id, approved_fingerprint, request_id }),
+    promptImport: (id: string, file: File, version_id: string, reference_id: string, external_prompt: string) => new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(",")[1]);
+        reader.onerror = () => reject(new Error("无法读取本机图片"));
+        reader.readAsDataURL(file);
+    }).then((base64) => request(`/projects/${id}/prompts/preview/import`, { name: file.name, mime: file.type, base64, version_id, reference_id, external_prompt })),
     promptReview: (id: string, version_id: string, source_id: string, decision: "采用" | "废图", reason = "") => request(`/projects/${id}/prompts/preview/review`, { version_id, source_id, decision, reason }),
 };

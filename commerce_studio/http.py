@@ -204,6 +204,8 @@ class Handler(BaseHTTPRequestHandler):
                     return prompts.run_preview(STORE, project, body)
                 if parts[3:] == ["prompts", "preview", "review"]:
                     return prompts.review_preview(STORE, project, body.get("version_id"), body.get("source_id"), body.get("decision"), body.get("reason", ""))
+                if parts[3:] == ["prompts", "preview", "import"]:
+                    return prompts.import_preview(STORE, project, body.get("version_id"), body.get("reference_id"), body.get("name"), body.get("mime"), body.get("base64"), body.get("external_prompt"))
                 if parts[3:] == ["nodes"]:
                     return STORE.add_node(project, body.get("kind"), body.get("data"))
                 if parts[3:] == ["edges"]:

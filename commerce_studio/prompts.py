@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import copy
+import base64
+import io
 import json
+
+from PIL import Image, UnidentifiedImageError
 
 from app import seeany
 from app.providers import deepseek_complete
@@ -184,15 +188,44 @@ def run_preview(store, project, body):
     return task
 
 
+def import_preview(store, project, version_id, reference_id, name, mime, encoded, external_prompt):
+    brief, master = _context(project)
+    version = next((v for v in project["prompt_versions"] if v["id"] == version_id), None)
+    if not version or version["brief_id"] != brief["id"] or version["master_id"] != master["id"]:
+        raise ValueError("请选择当前简报和母版对应的提示词版本")
+    if reference_id not in master["asset_ids"]:
+        raise ValueError("请选择当前母版参考图")
+    if mime not in ("image/jpeg", "image/png", "image/webp"):
+        raise ValueError("仅支持 JPG、PNG 或 WebP 图片")
+    if not isinstance(external_prompt, str) or not external_prompt.strip() or len(external_prompt) > 4000:
+        raise ValueError("请记录生成这张图时实际使用的 GPT 提示词")
+    try:
+        with Image.open(io.BytesIO(base64.b64decode(encoded, validate=True))) as image:
+            if image.format != {"image/jpeg": "JPEG", "image/png": "PNG", "image/webp": "WEBP"}[mime]:
+                raise ValueError("图片格式与文件类型不匹配")
+            image.verify()
+    except (ValueError, TypeError, UnidentifiedImageError, OSError) as exc:
+        raise ValueError("导入文件不是有效图片") from exc
+    source = store.add_source(project, name, mime, encoded)
+    source.update(origin="GPT import", prompt_version_id=version_id, reference_ids=[reference_id],
+                  brief_id=brief["id"], master_id=master["id"], import_prompt=external_prompt.strip())
+    store.save(project)
+    return source
+
+
 def review_preview(store, project, version_id, source_id, decision, reason=""):
     if decision not in ("采用", "废图"):
         raise ValueError("请选择采用或废图")
     task = next((t for t in project["tasks"] if t.get("kind") == "prompt_preview" and
                  t["input_snapshot"]["version_id"] == version_id and source_id in t.get("asset_ids", [])), None)
-    if not task:
+    imported = next((s for s in project["sources"] if s["id"] == source_id and s.get("origin") == "GPT import"
+                     and s.get("prompt_version_id") == version_id), None)
+    if not task and not imported:
         raise ValueError("图片不是此提示词版本的试图候选")
     brief, master = _context(project)
-    if task["input_snapshot"]["brief_id"] != brief["id"] or task["input_snapshot"]["master_id"] != master["id"]:
+    source_brief = imported["brief_id"] if imported else task["input_snapshot"]["brief_id"]
+    source_master = imported["master_id"] if imported else task["input_snapshot"]["master_id"]
+    if source_brief != brief["id"] or source_master != master["id"]:
         raise ValueError("上游版本已变化，请重新试图")
     if decision == "废图" and not str(reason).strip():
         raise ValueError("请记录废图原因")
