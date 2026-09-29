@@ -342,6 +342,50 @@ class CommerceStudioTests(unittest.TestCase):
             thread.assert_called_once()
         flova_flow.ACTIVE.discard(self.project["id"])
 
+    def test_flova_shots_advance_only_after_review_and_export_uses_current_versions(self):
+        self.approved_project()
+        brief_id = self.project["brief_versions"][-1]["id"]
+        master = self.project["master_versions"][-1]
+        self.project["directions"].append({"id": "direction-1", "brief_id": brief_id, "master_id": master["id"]})
+        self.store.approve_direction(self.project, "direction-1")
+        script = self.store.add_script(self.project, "两镜脚本")
+        self.store.approve_script(self.project, script["id"])
+        board = self.store.add_storyboard(self.project, [
+            {"visual": "产品正面", "duration": 3, "reference_asset_id": master["asset_ids"][0]},
+            {"visual": "产品侧面", "duration": 3, "reference_asset_id": master["asset_ids"][1]},
+        ])
+        self.store.approve_storyboard(self.project, board["id"])
+        self.project["external"]["flova_project_id"] = "remote-project"
+        first, second = (shot["id"] for shot in board["shots"])
+        with self.assertRaisesRegex(ValueError, "前面的镜头"):
+            flova_flow.shot_quote(self.project, second)
+        offer = flova_flow.shot_quote(self.project, first)
+        with patch.object(flova_flow.threading, "Thread"):
+            first_task = flova_flow.run_shot(self.store, self.project, {"shot_id": first, "approved_fingerprint": offer["fingerprint"], "request_id": "shot-request-111"})
+            self.assertEqual(flova_flow.run_shot(self.store, self.project, {"shot_id": first, "approved_fingerprint": offer["fingerprint"], "request_id": "shot-request-111"})["id"], first_task["id"])
+        with patch.object(flova_flow, "_upload"), patch.object(flova_flow.flova, "invoke", return_value={"status": "completed", "terminal": True, "stream_chat_id": "shot-one-run", "pending_actions": []}) as remote:
+            flova_flow._run_worker(self.store, self.project["id"], first_task["id"])
+        prompt = remote.call_args.args[3]
+        self.assertIn("仅制作", prompt)
+        self.assertIn("第 1 个镜头", prompt)
+        self.assertNotIn("第 2 个镜头", prompt)
+        self.project = self.store.load(self.project["id"])
+        flova_flow.approve_shot(self.store, self.project, first_task["id"])
+        offer = flova_flow.shot_quote(self.project, second)
+        with patch.object(flova_flow.threading, "Thread"):
+            second_task = flova_flow.run_shot(self.store, self.project, {"shot_id": second, "approved_fingerprint": offer["fingerprint"], "request_id": "shot-request-222"})
+        flova_flow.ACTIVE.discard(self.project["id"])
+        flova_flow._apply_run_result(second_task, {"status": "completed", "terminal": True, "stream_chat_id": "shot-two-run", "pending_actions": []})
+        self.store.save(self.project)
+        flova_flow.approve_shot(self.store, self.project, second_task["id"])
+        flova_flow.approve_shot_sequence(self.store, self.project)
+        with patch.object(video_export.flova, "readiness", return_value={"can_export": True}):
+            self.assertEqual(video_export.quote(self.project)["input_snapshot"]["approved_run_task_id"], second_task["id"])
+        newer = self.store.add_fact(self.project, "电压", "220V", status="已知事实")
+        self.store.confirm_brief(self.project, [newer["id"]])
+        with self.assertRaisesRegex(ValueError, "版本已变化"):
+            video_export.quote(self.project)
+
     def test_flova_recovery_never_accepts_unrelated_current_run(self):
         task = {"id": "local-task", "provider": "Flova", "status": "待核对", "remote_id": None,
                 "remote_started": "2026-09-29T00:00:00+00:00", "input_snapshot": {"flova_project_id": "remote-project"}}
@@ -368,8 +412,14 @@ class CommerceStudioTests(unittest.TestCase):
         self.assertEqual(task["status"], "失败")
 
     def test_flova_export_requires_review_and_keeps_final_video_local(self):
+        self.approved_project()
         self.project["external"]["flova_project_id"] = "remote-project"
+        brief_id = self.project["brief_versions"][-1]["id"]
+        master_id = self.project["master_versions"][-1]["id"]
+        storyboard_id = "approved-storyboard"
+        self.project["storyboard_approval"] = storyboard_id
         run_task = {"id": "creative-run", "kind": "video", "provider": "Flova", "status": "待审核", "remote_id": "stream-123",
+                    "input_snapshot": {"flova_project_id": "remote-project", "brief_id": brief_id, "master_id": master_id, "storyboard_id": storyboard_id},
                     "pending_actions": [], "estimate": None, "actual": None, "currency": None, "created": "2026-09-29T00:00:00+00:00"}
         self.project["tasks"].append(run_task)
         with self.assertRaisesRegex(ValueError, "批准导出"):

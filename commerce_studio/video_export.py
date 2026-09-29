@@ -24,6 +24,13 @@ def quote(project):
     task = next((t for t in project["tasks"] if t["id"] == approval["task_id"]), None)
     if not task or task.get("status") != "待审核" or task.get("remote_id") != approval["stream_chat_id"]:
         raise ValueError("Flova 视频审核版本已变化")
+    inputs = task.get("input_snapshot") or {}
+    if (not project["brief_versions"] or not project["master_versions"] or
+            inputs.get("brief_id") != project["brief_versions"][-1]["id"] or
+            inputs.get("master_id") != project["master_versions"][-1]["id"] or
+            inputs.get("storyboard_id") != project["storyboard_approval"] or
+            inputs.get("flova_project_id") != project["external"]["flova_project_id"]):
+        raise ValueError("Flova 视频依据的产品或分镜版本已变化，请重新审核")
     if any(t.get("kind") == "video_export" and t.get("status") in ("已排队", "远端运行中", "待核对", "待下载") for t in project["tasks"]):
         raise ValueError("上次 Flova 导出尚未核对，请先恢复")
     project_id = project["external"]["flova_project_id"]

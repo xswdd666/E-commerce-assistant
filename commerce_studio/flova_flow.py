@@ -58,13 +58,13 @@ def attach_project(store, project, project_id):
 def quote(project):
     project_id = project["external"]["flova_project_id"]
     storyboard_id = project["storyboard_approval"]
-    if not project_id or not storyboard_id:
+    if not project_id or not storyboard_id or not project["master_versions"] or not project["brief_versions"]:
         raise ValueError("请先关联 Flova 项目并批准完整分镜")
     storyboard = next((s for s in project["storyboard_versions"] if s["id"] == storyboard_id), None)
     script = next((s for s in project["script_versions"] if s["id"] == project["script_approval"]), None)
     master = project["master_versions"][-1]
     brief = project["brief_versions"][-1]
-    if not storyboard or not script or storyboard["script_id"] != script["id"] or storyboard["master_id"] != master["id"] or script["brief_id"] != brief["id"]:
+    if not storyboard or not script or storyboard["script_id"] != script["id"] or storyboard["master_id"] != master["id"] or script["brief_id"] != brief["id"] or script["master_id"] != master["id"]:
         raise ValueError("上游版本已变化，请重新审核分镜")
     details = {d["id"]: d for d in master.get("inferred_details", []) if isinstance(d, dict)}
     if any(details.get(detail_id, {}).get("status") != "已核实" for shot in storyboard["shots"] for detail_id in shot.get("detail_ids", [])):
@@ -77,6 +77,25 @@ def quote(project):
     return {"provider": "Flova", "input_snapshot": snapshot, "fingerprint": fingerprint(snapshot),
             "estimate": None, "currency": None, "pricing_source": "Flova CLI 未提供可靠的单镜费用预测", "reliable": False,
             "requires_explicit_run": True}
+
+
+def shot_quote(project, shot_id):
+    offer = quote(project)
+    storyboard = next(s for s in project["storyboard_versions"] if s["id"] == project["storyboard_approval"])
+    found = next(((index, shot) for index, shot in enumerate(storyboard["shots"]) if shot["id"] == shot_id), None)
+    if not found:
+        raise ValueError("镜头不在当前已批准分镜中")
+    index, shot = found
+    if any(project["shot_approvals"].get(s["id"], {}).get("storyboard_id") != storyboard["id"] for s in storyboard["shots"][:index]):
+        raise ValueError("请先完成并审核前面的镜头")
+    if shot_id in project["shot_approvals"]:
+        raise ValueError("此镜头已批准；如需修改请先保存新的分镜版本")
+    snapshot = dict(offer["input_snapshot"])
+    snapshot.update(shot_id=shot_id, shot_index=index, shot=shot,
+                    assets=[asset for asset in snapshot["assets"] if asset["id"] == shot["reference_asset_id"]])
+    offer["input_snapshot"] = snapshot
+    offer["fingerprint"] = fingerprint(snapshot)
+    return offer
 
 
 def _upload(path: Path, envelope_path: Path):
@@ -108,9 +127,10 @@ def _run_worker(store, project_id, task_id):
         with tempfile.TemporaryDirectory(prefix="commerce-flova-") as temporary:
             directory = Path(temporary)
             material = directory / "approved-plan.txt"
+            shots = [snapshot["shot"]] if task["kind"] == "video_shot" else storyboard["shots"]
             material.write_text("已确认产品事实：\n" + "\n".join(f"{f['field']}：{f['value']}" for f in brief["facts"])
                                 + "\n\n已批准脚本：\n" + script["text"] + "\n\n已批准分镜：\n"
-                                + "\n".join(f"镜头 {i+1}（{shot['duration']} 秒）：{shot['visual']}；字幕：{shot['caption']}；已核实细节：{', '.join(next(d['text'] for d in master.get('inferred_details', []) if isinstance(d, dict) and d['id'] == detail_id) for detail_id in shot.get('detail_ids', [])) or '无'}" for i, shot in enumerate(storyboard["shots"]))
+                                + "\n".join(f"镜头 {(snapshot['shot_index'] if task['kind'] == 'video_shot' else i)+1}（{shot['duration']} 秒）：{shot['visual']}；字幕：{shot['caption']}；已核实细节：{', '.join(next(d['text'] for d in master.get('inferred_details', []) if isinstance(d, dict) and d['id'] == detail_id) for detail_id in shot.get('detail_ids', [])) or '无'}" for i, shot in enumerate(shots))
                                 + "\n\n母版仍待核实的结构不得用于特写、规格或卖点宣称。", encoding="utf-8")
             files = [material]
             for asset in snapshot["assets"]:
@@ -126,10 +146,15 @@ def _run_worker(store, project_id, task_id):
                 envelope_path = directory / f"upload-{index}.json"
                 _upload(path, envelope_path)
                 envelopes.extend(["--file-from", str(envelope_path)])
-            prompt = ("请依据已上传的产品事实、批准脚本、完整分镜与三视图母版，在当前 Flova 项目制作约 15 秒 9:16 竖屏商品详情页视频。"
-                      "上传的 approved-plan.txt 是正式脚本与分镜，master 图片是同一真实商品的已确认参考。"
-                      "每个镜头遵守分镜目标时长；静音时也要能理解；不要把未获核实的结构当作卖点。"
-                      "本轮先制作并呈现镜头与时间线，最终导出等待人工审核。")
+            if task["kind"] == "video_shot":
+                prompt = (f"请仅制作已上传文件中的第 {snapshot['shot_index']+1} 个镜头，目标 {snapshot['shot']['duration']} 秒，9:16 竖屏。"
+                          "只使用本次上传的已确认事实与母版参考，不生成或改动其他镜头，不导出成片。"
+                          "静音时也要能理解；未核实结构不能作为特写或卖点。完成后呈现该镜头供人工审核。")
+            else:
+                prompt = ("请依据已上传的产品事实、批准脚本、完整分镜与三视图母版，在当前 Flova 项目制作约 15 秒 9:16 竖屏商品详情页视频。"
+                          "上传的 approved-plan.txt 是正式脚本与分镜，master 图片是同一真实商品的已确认参考。"
+                          "每个镜头遵守分镜目标时长；静音时也要能理解；不要把未获核实的结构当作卖点。"
+                          "本轮先制作并呈现镜头与时间线，最终导出等待人工审核。")
             with store.lock:
                 project = store.load(project_id)
                 task = next(t for t in project["tasks"] if t["id"] == task_id)
@@ -158,6 +183,8 @@ def run(store, project, body):
     if existing:
         return existing
     offer = quote(project)
+    if any(t.get("kind") == "video_shot" and t.get("input_snapshot", {}).get("storyboard_id") == project["storyboard_approval"] for t in project["tasks"]):
+        raise ValueError("当前分镜已开始逐镜制作，请完成逐镜审核")
     if body.get("approved_fingerprint") != offer["fingerprint"]:
         raise ValueError("分镜输入已变化，请重新查看快照")
     request_id = body.get("request_id")
@@ -172,6 +199,40 @@ def run(store, project, body):
     task = {"id": ident(), "kind": "video", "provider": "Flova", "status": "已排队",
             "idempotency_key": request_id, "input_snapshot": offer["input_snapshot"], "estimate": None,
             "actual": None, "currency": None, "remote_id": None, "attempts": 1, "created": stamp(), "updated": stamp()}
+    project["video_approval"] = None
+    project["tasks"].append(task)
+    store.save(project)
+    threading.Thread(target=_run_worker, args=(store, project["id"], task["id"]), daemon=True).start()
+    return task
+
+
+def run_shot(store, project, body):
+    request_id = body.get("request_id")
+    if not isinstance(request_id, str) or not 8 <= len(request_id) <= 120:
+        raise ValueError("请提供请求标识以避免重复提交")
+    existing = next((t for t in project["tasks"] if t.get("idempotency_key") == request_id), None)
+    if existing:
+        return existing
+    offer = shot_quote(project, body.get("shot_id"))
+    if body.get("approved_fingerprint") != offer["fingerprint"]:
+        raise ValueError("镜头输入已变化，请重新查看快照")
+    snapshot = offer["input_snapshot"]
+    if any(t.get("kind") == "video" and t.get("input_snapshot", {}).get("storyboard_id") == snapshot["storyboard_id"] for t in project["tasks"]):
+        raise ValueError("当前分镜已开始整片创作，请使用该运行结果")
+    active_statuses = ("已排队", "上传素材", "远端运行中", "待核对", "待用户确认")
+    if any(t.get("provider") == "Flova" and t.get("status") in active_statuses for t in project["tasks"]):
+        raise ValueError("上次 Flova 运行尚未核对，请先恢复状态")
+    previous = [t for t in project["tasks"] if t.get("kind") == "video_shot" and t.get("input_snapshot", {}).get("shot_id") == snapshot["shot_id"]]
+    if any(t["status"] == "待审核" for t in previous):
+        raise ValueError("此镜头已有待审核结果；请先在 Flova 核对")
+    with ACTIVE_LOCK:
+        if project["id"] in ACTIVE:
+            raise ValueError("Flova 项目已有运行中的本地进程")
+        ACTIVE.add(project["id"])
+    task = {"id": ident(), "kind": "video_shot", "provider": "Flova", "status": "已排队",
+            "idempotency_key": request_id, "input_snapshot": snapshot, "estimate": None,
+            "actual": None, "currency": None, "remote_id": None, "attempts": len(previous) + 1,
+            "created": stamp(), "updated": stamp()}
     project["video_approval"] = None
     project["tasks"].append(task)
     store.save(project)
@@ -306,5 +367,43 @@ def approve_video(store, project, task_id):
     if any(action.get("blocking") for action in task.get("pending_actions") or []):
         raise ValueError("Flova 尚有待用户确认的操作")
     project["video_approval"] = {"task_id": task_id, "stream_chat_id": task["remote_id"], "approved_at": stamp(), "reviewer": "local"}
+    store.save(project)
+    return project["video_approval"]
+
+
+def approve_shot(store, project, task_id):
+    task = next((t for t in project["tasks"] if t["id"] == task_id and t.get("kind") == "video_shot"), None)
+    if not task or task["status"] != "待审核" or not task.get("remote_id"):
+        raise ValueError("请先等待当前镜头完成并在 Flova 人工核对")
+    if any(action.get("blocking") for action in task.get("pending_actions") or []):
+        raise ValueError("Flova 尚有待用户确认的操作")
+    offer = shot_quote(project, task["input_snapshot"]["shot_id"])
+    if offer["fingerprint"] != fingerprint(task["input_snapshot"]):
+        raise ValueError("镜头上游版本已变化，请重新审核")
+    shot_id = task["input_snapshot"]["shot_id"]
+    project["shot_approvals"][shot_id] = {"task_id": task_id, "stream_chat_id": task["remote_id"],
+                                          "storyboard_id": project["storyboard_approval"], "approved_at": stamp()}
+    store.save(project)
+    return project["shot_approvals"][shot_id]
+
+
+def approve_shot_sequence(store, project):
+    offer = quote(project)
+    storyboard = next(s for s in project["storyboard_versions"] if s["id"] == project["storyboard_approval"])
+    approvals = project["shot_approvals"]
+    if any(shot["id"] not in approvals or approvals[shot["id"]]["storyboard_id"] != storyboard["id"] for shot in storyboard["shots"]):
+        raise ValueError("请先逐镜完成并审核全部镜头")
+    task = None
+    for index, shot in enumerate(storyboard["shots"]):
+        approval = approvals[shot["id"]]
+        task = next((t for t in project["tasks"] if t["id"] == approval["task_id"] and t.get("kind") == "video_shot"), None)
+        if not task or task["status"] != "待审核" or task.get("remote_id") != approval["stream_chat_id"]:
+            raise ValueError("逐镜审核任务已变化，请重新核对")
+        inputs = task.get("input_snapshot") or {}
+        if (inputs.get("shot_id") != shot["id"] or inputs.get("shot_index") != index or inputs.get("shot") != shot or
+                any(inputs.get(key) != offer["input_snapshot"].get(key) for key in ("flova_project_id", "brief_id", "master_id", "script_id", "storyboard_id"))):
+            raise ValueError("逐镜输入已变化，请重新审核")
+    project["video_approval"] = {"task_id": task["id"], "stream_chat_id": task["remote_id"],
+                                 "storyboard_id": storyboard["id"], "mode": "shots", "approved_at": stamp(), "reviewer": "local"}
     store.save(project)
     return project["video_approval"]

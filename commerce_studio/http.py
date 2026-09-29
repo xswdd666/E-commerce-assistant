@@ -152,6 +152,14 @@ class Handler(BaseHTTPRequestHandler):
                     return flova_flow.attach_project(STORE, project, body.get("project_id"))
                 if parts[3:] == ["flova", "quote"]:
                     return flova_flow.quote(project)
+                if parts[3:] == ["flova", "shots", "quote"]:
+                    return flova_flow.shot_quote(project, body.get("shot_id"))
+                if parts[3:] == ["flova", "shots", "run"]:
+                    return flova_flow.run_shot(STORE, project, body)
+                if parts[3:] == ["flova", "shots", "approve"]:
+                    return flova_flow.approve_shot(STORE, project, body.get("task_id"))
+                if parts[3:] == ["flova", "shots", "approve-sequence"]:
+                    return flova_flow.approve_shot_sequence(STORE, project)
                 if parts[3:] == ["flova", "resources"]:
                     return flova_flow.resources(project)
                 if parts[3:] == ["flova", "resources", "pull"]:

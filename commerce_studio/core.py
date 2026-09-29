@@ -63,7 +63,7 @@ class Store:
                    "gallery_versions": [], "gallery_approval": None, "gallery_choices": {}, "gallery_reviews": [],
                    "prompt_versions": [], "prompt_adoption": None, "prompt_reviews": [],
                    "image_observations": [],
-                   "video_approval": None, "deliverables": [], "video_edits": [],
+                   "video_approval": None, "shot_approvals": {}, "deliverables": [], "video_edits": [],
                    "nodes": [], "edges": [], "tasks": [], "costs": [], "chat": []}
         self.save(project)
         return project
@@ -121,6 +121,7 @@ class Store:
             project.setdefault("prompt_reviews", [])
             project.setdefault("image_observations", [])
             project.setdefault("video_approval", None)
+            project.setdefault("shot_approvals", {})
             project.setdefault("deliverables", [])
             project.setdefault("video_edits", [])
             project.setdefault("costs", [])
