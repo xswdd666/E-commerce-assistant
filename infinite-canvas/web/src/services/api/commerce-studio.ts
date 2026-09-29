@@ -1,10 +1,12 @@
 const BASE = "http://127.0.0.1:8766/api";
 
-export type StudioSource = { id: string; name: string; mime: string; bytes: number; parse_status?: string; origin?: string; candidate_group?: number; view_label?: string; reference_ids?: string[]; gallery_plan_id?: string; gallery_item_id?: string };
+export type StudioSource = { id: string; name: string; mime: string; bytes: number; parse_status?: string; origin?: string; candidate_group?: number; view_label?: string; reference_ids?: string[]; gallery_plan_id?: string; gallery_item_id?: string; prompt_version_id?: string };
 export type StudioFact = { id: string; field: string; value: string; source_id?: string; status: "待核实" | "已知事实" | "创意假设" };
 export type GalleryItem = { id: string; kind: string; prompt: string; ratio: string; title: string; subtitle: string; x: number; y: number };
 export type GalleryPlan = { id: string; parent_id: string | null; brief_id: string; master_id: string; origin: string; items: GalleryItem[]; created: string };
 export type StudioCost = { id: string; task_id: string; provider: string; stage: string; node_id: string | null; purpose: string; model: string | null; estimate: number | null; actual: number | null; currency: string | null; pricing_source: string; status: string };
+export type PromptFields = { product: string; scene: string; composition: string; lighting: string; negative: string; ratio: string };
+export type PromptVersion = { id: string; parent_id: string | null; brief_id: string; master_id: string; fields: PromptFields; text: string; origin: string; changed_fields: string[]; created: string };
 export type StudioProject = {
     id: string;
     name: string;
@@ -22,9 +24,12 @@ export type StudioProject = {
     gallery_approval: string | null;
     gallery_choices: Record<string, string>;
     gallery_reviews: Array<{ id: string; item_id: string; source_id: string; decision: string; reason: string }>;
+    prompt_versions: PromptVersion[];
+    prompt_adoption: { version_id: string; source_id: string; review_id: string } | null;
+    prompt_reviews: Array<{ id: string; version_id: string; source_id: string; decision: string; reason: string }>;
     costs: StudioCost[];
     external: { flova_project_id: string; flova_project_url: string };
-    tasks: Array<{ id: string; provider: string; kind?: string; status: string; estimate: number | null; actual: number | null; candidate_group?: number; view_label?: string; asset_ids?: string[]; source_id?: string; input_snapshot?: { item?: { id: string } }; pending_actions?: Array<{ type?: string; message?: string; blocking?: boolean }> }>;
+    tasks: Array<{ id: string; provider: string; kind?: string; status: string; estimate: number | null; actual: number | null; candidate_group?: number; view_label?: string; asset_ids?: string[]; source_id?: string; input_snapshot?: { item?: { id: string }; version_id?: string }; pending_actions?: Array<{ type?: string; message?: string; blocking?: boolean }> }>;
     chat: Array<{ id: string; prompt: string; reply: string; brief_id?: string; created: string }>;
 };
 
@@ -110,4 +115,10 @@ export const studioApi = {
         if (!response.ok) throw new Error(result.error || "商品项目恢复失败");
         return result as StudioProject;
     },
+    promptSave: (id: string, fields: PromptFields, parent_id: string | null) => request<PromptVersion>(`/projects/${id}/prompts/versions`, { fields, parent_id }),
+    promptChangeQuote: (id: string, parent_id: string, changed_fields: string[], instruction: string) => request<StudioQuote>(`/projects/${id}/prompts/changes/quote`, { parent_id, changed_fields, instruction }),
+    promptChangeRun: (id: string, parent_id: string, changed_fields: string[], instruction: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/prompts/changes/run`, { parent_id, changed_fields, instruction, approved_fingerprint, request_id }),
+    promptPreviewQuote: (id: string, version_id: string, reference_id: string) => request<StudioQuote>(`/projects/${id}/prompts/preview/quote`, { version_id, reference_id }),
+    promptPreviewRun: (id: string, version_id: string, reference_id: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/prompts/preview/run`, { version_id, reference_id, approved_fingerprint, request_id }),
+    promptReview: (id: string, version_id: string, source_id: string, decision: "采用" | "废图", reason = "") => request(`/projects/${id}/prompts/preview/review`, { version_id, source_id, decision, reason }),
 };

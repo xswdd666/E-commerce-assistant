@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .core import Store
-from . import backup, flova_flow, gallery, service
+from . import backup, flova_flow, gallery, prompts, service
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -152,6 +152,18 @@ class Handler(BaseHTTPRequestHandler):
                     return gallery.run_image(STORE, project, body)
                 if parts[3:] == ["gallery", "images", "review"]:
                     return gallery.review_image(STORE, project, body.get("item_id"), body.get("source_id"), body.get("decision"), body.get("reason", ""))
+                if parts[3:] == ["prompts", "versions"]:
+                    return prompts.save_version(STORE, project, body.get("fields"), body.get("parent_id"))
+                if parts[3:] == ["prompts", "changes", "quote"]:
+                    return prompts.change_quote(project, body.get("parent_id"), body.get("changed_fields"), body.get("instruction"))
+                if parts[3:] == ["prompts", "changes", "run"]:
+                    return prompts.propose_changes(STORE, project, body)
+                if parts[3:] == ["prompts", "preview", "quote"]:
+                    return prompts.preview_quote(STORE, project, body.get("version_id"), body.get("reference_id"))
+                if parts[3:] == ["prompts", "preview", "run"]:
+                    return prompts.run_preview(STORE, project, body)
+                if parts[3:] == ["prompts", "preview", "review"]:
+                    return prompts.review_preview(STORE, project, body.get("version_id"), body.get("source_id"), body.get("decision"), body.get("reason", ""))
                 if parts[3:] == ["nodes"]:
                     return STORE.add_node(project, body.get("kind"), body.get("data"))
                 if parts[3:] == ["edges"]:

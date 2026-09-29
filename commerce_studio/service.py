@@ -444,6 +444,10 @@ def sync(store, project, task_id):
                     source["gallery_plan_id"] = task["input_snapshot"]["plan_id"]
                     source["gallery_item_id"] = task["input_snapshot"]["item"]["id"]
                     source["reference_ids"] = [r["source_id"] for r in task["input_snapshot"]["references"]]
+                elif task.get("kind") == "prompt_preview":
+                    source["origin"] = "SeeAny prompt preview"
+                    source["prompt_version_id"] = task["input_snapshot"]["version_id"]
+                    source["reference_ids"] = [task["input_snapshot"]["reference_id"]]
                 task["asset_ids"].append(source["id"])
                 task["imported_urls"].append(url)
                 store.save(project)

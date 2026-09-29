@@ -14,7 +14,7 @@ from PIL import Image
 
 from commerce_studio.core import Store
 from commerce_studio import service
-from commerce_studio import backup, flova_flow, gallery, http as bridge
+from commerce_studio import backup, flova_flow, gallery, http as bridge, prompts
 
 
 class CommerceStudioTests(unittest.TestCase):
@@ -314,6 +314,34 @@ class CommerceStudioTests(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
                 worker.join(timeout=2)
+
+    def test_structured_prompt_change_locks_other_fields_and_adopts_reviewed_preview(self):
+        self.approved_project()
+        fields = {"product": "白色外观", "scene": "厨房台面", "composition": "产品居中", "lighting": "柔和日光",
+                  "negative": "不得改变杯体结构", "ratio": "1:1"}
+        original = prompts.save_version(self.store, self.project, fields)
+        offer = prompts.change_quote(self.project, original["id"], ["scene"], "只改成卧室场景")
+        ai = {"id": "deepseek-remote", "text": json.dumps({"changes": [{"scene": "卧室床头"}, {"scene": "卧室书桌"}]}, ensure_ascii=False), "usage": {}}
+        with patch.object(prompts, "provider_key", return_value="test-key"), patch.object(prompts, "deepseek_complete", return_value=ai):
+            task = prompts.propose_changes(self.store, self.project, {"parent_id": original["id"], "changed_fields": ["scene"],
+                "instruction": "只改成卧室场景", "approved_fingerprint": offer["fingerprint"], "request_id": "prompt-change-123"})
+        self.assertEqual(task["status"], "待审核")
+        versions = self.project["prompt_versions"][-2:]
+        self.assertEqual([v["fields"]["scene"] for v in versions], ["卧室床头", "卧室书桌"])
+        self.assertTrue(all(v["fields"]["product"] == fields["product"] and v["fields"]["negative"] == fields["negative"] for v in versions))
+        reference_id = self.project["master_versions"][-1]["asset_ids"][0]
+        preview_quote = prompts.preview_quote(self.store, self.project, versions[0]["id"], reference_id)
+        with patch.object(prompts, "provider_key", return_value="test-key"), patch.object(prompts.seeany, "upload_image", return_value="https://seeany.com/upload"), patch.object(prompts.seeany, "submit", return_value={"data": {"task_uuid": "seeany-preview"}}) as submit:
+            preview_task = prompts.run_preview(self.store, self.project, {"version_id": versions[0]["id"], "reference_id": reference_id,
+                "approved_fingerprint": preview_quote["fingerprint"], "request_id": "prompt-preview-123"})
+        self.assertIn("卧室床头", submit.call_args.args[2]["prompt"])
+        result = {"data": {"task": {"status": "succeeded"}, "works": [{"url": "https://cdn.seeany.com/preview.png"}]}}
+        with patch.object(service, "provider_key", return_value="test-key"), patch.object(service.seeany, "task_status", return_value=result), patch.object(service.seeany, "download_image", return_value=(b"preview", ".png")):
+            service.sync(self.store, self.project, preview_task["id"])
+        source_id = preview_task["asset_ids"][0]
+        prompts.review_preview(self.store, self.project, versions[0]["id"], source_id, "采用")
+        self.assertEqual(self.project["prompt_adoption"]["source_id"], source_id)
+        self.assertEqual(self.project["sources"][-1]["reference_ids"], [reference_id])
 
     def test_canvas_preview_uses_snapshot_and_saves_original_reference(self):
         self.approved_project()

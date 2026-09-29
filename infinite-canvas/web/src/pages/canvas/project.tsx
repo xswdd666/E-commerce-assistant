@@ -3146,6 +3146,7 @@ function InfiniteCanvasPage() {
                     connections={connections}
                     selectedNodeId={[...selectedNodeIds][0]}
                     onInsertImage={(dataUrl, title) => insertAssistantImage({ id: nanoid(), prompt: title, dataUrl })}
+                    onInsertText={insertAssistantText}
                 />
 
                 <InfiniteCanvas

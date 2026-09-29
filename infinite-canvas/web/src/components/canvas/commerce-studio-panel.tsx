@@ -9,14 +9,15 @@ import { CanvasNodeType } from "@/types/canvas";
 import { CommercePlanSection } from "@/components/canvas/commerce-plan-section";
 import { CommerceFlovaSection } from "@/components/canvas/commerce-flova-section";
 import { CommerceGallerySection } from "@/components/canvas/commerce-gallery-section";
+import { CommercePromptSection } from "@/components/canvas/commerce-prompt-section";
 import { createCanvasExportBlob } from "@/lib/canvas/canvas-export";
 import { createZip } from "@/lib/zip";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
-type Props = { open: boolean; onClose: () => void; canvasId: string; title: string; nodes: CanvasNodeData[]; connections: CanvasConnection[]; selectedNodeId?: string; onInsertImage: (dataUrl: string, title: string) => Promise<void> };
+type Props = { open: boolean; onClose: () => void; canvasId: string; title: string; nodes: CanvasNodeData[]; connections: CanvasConnection[]; selectedNodeId?: string; onInsertImage: (dataUrl: string, title: string) => Promise<void>; onInsertText: (text: string, title: string) => void };
 
-export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, connections, selectedNodeId, onInsertImage }: Props) {
+export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, connections, selectedNodeId, onInsertImage, onInsertText }: Props) {
     const [project, setProject] = useState<StudioProject | null>(null);
     const [health, setHealth] = useState<{ deepseek: boolean; seeany: boolean; flova: boolean } | null>(null);
     const [error, setError] = useState("");
@@ -173,6 +174,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                             {project.chat.map((item) => <div key={item.id} className="mt-3"><Typography.Text strong>{item.prompt}</Typography.Text><Typography.Paragraph className="mt-1 whitespace-pre-wrap">{item.reply}</Typography.Paragraph></div>)}
                         </section>
                         <CommercePlanSection project={project} busy={busy} act={act} />
+                        <CommercePromptSection project={project} busy={busy} act={act} onInsertImage={onInsertImage} onInsertText={onInsertText} />
                         <CommerceGallerySection project={project} busy={busy} act={act} />
                         <CommerceFlovaSection project={project} busy={busy} act={act} />
                         <section>
