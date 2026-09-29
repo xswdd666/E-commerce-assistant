@@ -8,7 +8,7 @@ type Props = { project: StudioProject; busy: boolean; act: (operation: () => Pro
 
 export function CommerceFinishingSection({ project, busy, act }: Props) {
     const latest = project.video_edits.at(-1);
-    const videos = project.deliverables.filter((item) => item.kind === "video" || item.kind === "finished_video");
+    const videos = project.deliverables.filter((item) => ["video", "shot_video", "finished_video"].includes(item.kind));
     const [sourceId, setSourceId] = useState<string>();
     const [clips, setClips] = useState<Clip[]>([]);
     const [previewUrl, setPreviewUrl] = useState<string>();
@@ -50,10 +50,10 @@ export function CommerceFinishingSection({ project, busy, act }: Props) {
 
     return <section>
         <Typography.Title level={5}>本地视频收尾</Typography.Title>
-        <Typography.Paragraph type="secondary">基于已下载的 Flova 成片裁剪、重排、变速和加字幕；不会再次请求生成模型。音频随速度调整时保持音高。</Typography.Paragraph>
+        <Typography.Paragraph type="secondary">基于已下载的 Flova 成片或单镜素材裁剪、重排、变速和加字幕；不会再次请求生成模型。音频随速度调整时保持音高。</Typography.Paragraph>
         {localError ? <Typography.Text type="danger">{localError}</Typography.Text> : null}
         {!videos.length ? <Typography.Text type="secondary">Flova 成片下载后可编辑。</Typography.Text> : <>
-            <Space.Compact className="w-full"><Select className="w-full" value={sourceId} onChange={setSourceId} options={videos.map((item) => ({ value: item.id, label: item.kind === "video" ? "Flova 原片" : `收尾版本 ${item.id.slice(0, 8)}` }))} /><Button disabled={busy || !sourceId} onClick={() => void addClip()}>添加片段</Button></Space.Compact>
+            <Space.Compact className="w-full"><Select className="w-full" value={sourceId} onChange={setSourceId} options={videos.map((item) => ({ value: item.id, label: item.kind === "video" ? "Flova 原片" : item.kind === "shot_video" ? `镜头 ${item.name}` : `收尾版本 ${item.id.slice(0, 8)}` }))} /><Button disabled={busy || !sourceId} onClick={() => void addClip()}>添加片段</Button></Space.Compact>
             {clips.map((clip, index) => <div key={clip.key} className="mt-3 border-t pt-2">
                 <Space><Typography.Text strong>片段 {index + 1}</Typography.Text><Button size="small" disabled={index === 0} onClick={() => move(index, -1)}>上移</Button><Button size="small" disabled={index === clips.length - 1} onClick={() => move(index, 1)}>下移</Button><Button size="small" onClick={() => setClips((current) => current.filter((item) => item.key !== clip.key))}>删除</Button></Space>
                 <Typography.Paragraph className="mt-1 mb-1" type="secondary">来源：{videos.find((item) => item.id === clip.source_id)?.name || clip.source_id}</Typography.Paragraph>

@@ -20,7 +20,7 @@ def _tools():
 
 
 def _source_path(store, project, deliverable_id):
-    item = next((d for d in project.get("deliverables", []) if d["id"] == deliverable_id and d["kind"] in ("video", "finished_video")), None)
+    item = next((d for d in project.get("deliverables", []) if d["id"] == deliverable_id and d["kind"] in ("video", "shot_video", "finished_video")), None)
     if not item:
         raise ValueError("镜头来源必须是本地 Flova 成片或已收尾视频")
     path = store.root / "deliverables" / project["id"] / f"{deliverable_id}.mp4"

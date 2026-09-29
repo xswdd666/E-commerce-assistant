@@ -32,7 +32,7 @@ export type StudioProject = {
     prompt_adoption: { version_id: string; source_id: string; review_id: string } | null;
     prompt_reviews: Array<{ id: string; version_id: string; source_id: string; decision: string; reason: string }>;
     video_approval: { task_id: string; stream_chat_id: string; approved_at: string } | null;
-    deliverables: Array<{ id: string; kind: string; task_id?: string; edit_id?: string; name: string; bytes: number; sha256: string }>;
+    deliverables: Array<{ id: string; kind: string; task_id?: string; edit_id?: string; resource_id?: string; name: string; bytes: number; sha256: string }>;
     video_edits: Array<{ id: string; parent_id: string | null; clips: Array<{ id: string; source_id: string; start: number; end: number; speed: number; caption: string; preview_duration: number }>; preview_duration: number }>;
     costs: StudioCost[];
     external: { flova_project_id: string; flova_project_url: string };
@@ -101,6 +101,7 @@ export const studioApi = {
     flovaRun: (id: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/flova/run`, { approved_fingerprint, request_id }),
     flovaRecover: (id: string, taskId: string) => request(`/projects/${id}/flova/${taskId}/recover`, {}),
     flovaResources: (id: string) => request<{ items: Array<{ resource_id: string; name?: string; media_type?: string; status?: string }>; unparsed: boolean }>(`/projects/${id}/flova/resources`, {}),
+    flovaPullResource: (id: string, resource_id: string) => request(`/projects/${id}/flova/resources/pull`, { resource_id }),
     flovaApprove: (id: string, task_id: string) => request(`/projects/${id}/flova/approve`, { task_id }),
     flovaExportQuote: (id: string) => request<StudioQuote>(`/projects/${id}/flova/export/quote`, {}),
     flovaExportRun: (id: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/flova/export/run`, { approved_fingerprint, request_id }),

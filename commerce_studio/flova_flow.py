@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import tempfile
 import threading
 from pathlib import Path
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from app import flova
 from .core import fingerprint, ident, stamp
@@ -229,6 +232,71 @@ def resources(project):
     visit(result)
     unique = list({item["resource_id"]: item for item in found}.values())
     return {"items": unique, "unparsed": bool(result) and not bool(unique)}
+
+
+def pull_video_resource(store, project, resource_id, transport=None):
+    if not isinstance(resource_id, str) or not resource_id or len(resource_id) > 128:
+        raise ValueError("Flova 资源标识无效")
+    existing = next((d for d in project["deliverables"] if d.get("kind") == "shot_video" and d.get("resource_id") == resource_id), None)
+    if existing:
+        return existing
+    available = next((item for item in resources(project)["items"] if item["resource_id"] == resource_id and item["media_type"] == "video"), None)
+    if not available:
+        raise ValueError("Flova 项目中没有这个视频资源")
+    details = flova.invoke("resource", "info", project["external"]["flova_project_id"], resource_id)
+
+    def urls(value):
+        if isinstance(value, dict):
+            for key in ("resource_url", "download_url", "url"):
+                if isinstance(value.get(key), str):
+                    yield value[key]
+            for nested in value.values():
+                if isinstance(nested, (dict, list)):
+                    yield from urls(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                yield from urls(nested)
+
+    url = next((item for item in urls(details) if urlparse(item).scheme == "https" and urlparse(item).hostname), None)
+    if not url:
+        raise ValueError("Flova 视频资源尚无可下载地址，请稍后刷新资源")
+    directory = store.root / "deliverables" / project["id"]
+    directory.mkdir(parents=True, exist_ok=True)
+    deliverable_id = ident()
+    target = directory / f"{deliverable_id}.mp4"
+    temporary = target.with_suffix(".part")
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with (transport or urlopen)(Request(url, headers={"User-Agent": "commerce-studio"}), timeout=180) as response, temporary.open("wb") as output:
+            while chunk := response.read(4 * 1024 * 1024):
+                size += len(chunk)
+                if size > 2 * 1024 * 1024 * 1024:
+                    raise ValueError("Flova 镜头超过本地支持的 2 GB")
+                output.write(chunk)
+                digest.update(chunk)
+        if not size:
+            raise ValueError("Flova 镜头下载为空")
+        temporary.replace(target)
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("Flova 镜头下载失败，请在项目中核对该资源") from exc
+    finally:
+        temporary.unlink(missing_ok=True)
+    deliverable = {"id": deliverable_id, "kind": "shot_video", "resource_id": resource_id,
+                   "name": str(available.get("name") or f"flova-shot-{resource_id}.mp4")[:200],
+                   "bytes": size, "sha256": digest.hexdigest(), "created": stamp()}
+    with store.lock:
+        latest = store.load(project["id"])
+        previous = next((d for d in latest["deliverables"] if d.get("kind") == "shot_video" and d.get("resource_id") == resource_id), None)
+        if previous:
+            target.unlink(missing_ok=True)
+            return previous
+        latest["deliverables"].append(deliverable)
+        store.save(latest)
+        project["deliverables"] = latest["deliverables"]
+    return deliverable
 
 
 def approve_video(store, project, task_id):

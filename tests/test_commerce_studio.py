@@ -269,6 +269,22 @@ class CommerceStudioTests(unittest.TestCase):
         self.project["external"]["flova_project_id"] = "remote-project"
         self.assertEqual(flova_flow.quote(self.project)["input_snapshot"]["master_id"], verified["id"])
 
+    def test_flova_shot_resource_download_is_idempotent_and_backed_up(self):
+        self.project["external"]["flova_project_id"] = "remote-project"
+        inventory = {"items": [{"resource_id": "shot-one", "media_type": "video", "name": "镜头一.mp4"}]}
+        details = {"data": {"resource_url": "https://example.com/shot-one.mp4"}}
+        with patch.object(flova_flow.flova, "invoke", side_effect=[inventory, details]) as command:
+            item = flova_flow.pull_video_resource(self.store, self.project, "shot-one", transport=lambda *args, **kwargs: io.BytesIO(b"mock-mp4"))
+            same = flova_flow.pull_video_resource(self.store, self.project, "shot-one")
+        self.assertEqual(item["id"], same["id"])
+        self.assertEqual(item["kind"], "shot_video")
+        self.assertEqual(command.call_count, 2)
+        self.assertEqual(video_export.deliverable_bytes(self.store, self.project, item["id"]), b"mock-mp4")
+        with zipfile.ZipFile(io.BytesIO(backup.export_project(self.store, self.project))) as archive:
+            self.assertEqual(archive.read(f"deliverables/{item['id']}.mp4"), b"mock-mp4")
+        restored = backup.restore_project(self.store, backup.export_project(self.store, self.project))
+        self.assertEqual(video_export.deliverable_bytes(self.store, restored, item["id"]), b"mock-mp4")
+
     def test_flova_run_uses_approved_storyboard_and_blocks_duplicate_round(self):
         self.approved_project()
         with self.assertRaisesRegex(ValueError, "批准完整分镜"):

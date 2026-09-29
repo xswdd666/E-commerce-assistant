@@ -25,7 +25,7 @@ def export_project(store, project):
             _, raw = store.source_bytes(project, source["id"])
             output.writestr(f"files/{source['id']}", raw)
         for deliverable in project.get("deliverables", []):
-            if deliverable.get("kind") not in ("video", "finished_video"):
+            if deliverable.get("kind") not in ("video", "shot_video", "finished_video"):
                 raise ValueError("备份包含未知交付物类型")
             raw = (store.root / "deliverables" / project["id"] / f"{deliverable['id']}.mp4").read_bytes()
             if hashlib.sha256(raw).hexdigest() != deliverable.get("sha256"):

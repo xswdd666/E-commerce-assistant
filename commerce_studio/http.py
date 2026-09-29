@@ -154,6 +154,8 @@ class Handler(BaseHTTPRequestHandler):
                     return flova_flow.quote(project)
                 if parts[3:] == ["flova", "resources"]:
                     return flova_flow.resources(project)
+                if parts[3:] == ["flova", "resources", "pull"]:
+                    return flova_flow.pull_video_resource(STORE, project, body.get("resource_id"))
                 if parts[3:] == ["flova", "approve"]:
                     return flova_flow.approve_video(STORE, project, body.get("task_id"))
                 if parts[3:] == ["flova", "run"]:
