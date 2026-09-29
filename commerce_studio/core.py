@@ -10,6 +10,7 @@ import base64
 import binascii
 import hashlib
 import json
+import shutil
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -89,6 +90,23 @@ class Store:
                     if len(matches) >= 100:
                         return matches
         return matches
+
+    def delete(self, project_id):
+        with self.lock:
+            path = self._path(project_id)
+            already_missing = not path.is_file()
+            root = self.root.resolve()
+            directories = [self.root / kind / project_id for kind in ("files", "deliverables")]
+            for directory in directories:
+                resolved = directory.resolve()
+                expected_parent = root / directory.parent.name
+                if expected_parent.resolve() != expected_parent or resolved.parent != expected_parent or directory.is_symlink():
+                    raise ValueError("项目文件目录无效，停止删除")
+            for directory in directories:
+                if directory.exists():
+                    shutil.rmtree(directory)
+            path.unlink(missing_ok=True)
+            return {"deleted_id": project_id, "already_missing": already_missing}
 
     def load(self, project_id):
         try:

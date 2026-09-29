@@ -84,6 +84,19 @@ class CommerceStudioTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "关键词"):
             self.store.search("")
 
+    def test_delete_project_removes_local_sources_and_deliverables_only(self):
+        source = self.store.add_source(self.project, "原图.png", "image/png", base64.b64encode(b"image").decode())
+        other = self.store.create("保留项目")
+        directory = self.store.root / "deliverables" / self.project["id"]
+        directory.mkdir(parents=True)
+        (directory / "video.mp4").write_bytes(b"video")
+        self.assertEqual(self.store.delete(self.project["id"])["deleted_id"], self.project["id"])
+        self.assertFalse(self.store._path(self.project["id"]).exists())
+        self.assertFalse((self.store.root / "files" / self.project["id"] / source["id"]).exists())
+        self.assertFalse(directory.exists())
+        self.assertEqual(self.store.load(other["id"])["name"], "保留项目")
+        self.assertTrue(self.store.delete(self.project["id"])["already_missing"])
+
     def test_deepseek_extraction_is_reviewed_before_brief(self):
         source = self.store.add_source(self.project, "merchant.txt", "text/plain", base64.b64encode("杯体为白色".encode()).decode())
         offer = service.facts_quote(self.project, {"source_id": source["id"]})

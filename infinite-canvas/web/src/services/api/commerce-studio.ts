@@ -59,6 +59,7 @@ export const studioApi = {
     search: (query: string) => request<Array<{ project_id: string; project_name: string; kind: string; text: string; updated: string }>>(`/search?q=${encodeURIComponent(query)}`),
     create: (name: string) => request<StudioProject>("/projects", { name }),
     get: (id: string) => request<StudioProject>(`/projects/${id}`),
+    delete: (id: string) => request<{ deleted_id: string }>(`/projects/${id}/delete`, {}),
     source: (id: string, file: File) =>
         new Promise<string>((resolve, reject) => {
             const reader = new FileReader();

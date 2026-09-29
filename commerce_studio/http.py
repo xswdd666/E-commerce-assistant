@@ -86,6 +86,8 @@ class Handler(BaseHTTPRequestHandler):
             return STORE.create(self._body().get("name"))
         if len(parts) < 3 or parts[:2] != ["api", "projects"]:
             raise ValueError("接口不存在")
+        if method == "POST" and parts[3:] == ["delete"]:
+            return STORE.delete(parts[2])
         project = STORE.load(parts[2])
         if method == "GET" and len(parts) == 3:
             return project
