@@ -1,6 +1,6 @@
 # 广告电商工作台开发切片
 
-新画布放在 `infinite-canvas/`，旧原型的 `app/web/` 保留原状。底座来自用户提供的 `infinite-canvas-0.19.0` 源码目录；上游版本 `v0.19.0` 对应提交 `e856c878e0a34651bb828e28f0af20d71016a7d4`，许可证为 MIT，已保留版权文件与页面原作者信息。
+新画布放在 `infinite-canvas/`，旧原型的 `app/web/` 保留原状。底座已与 GitHub `basketikun/infinite-canvas` 的 `main` 提交 `dab19adc0847e32e39b7fc8ff90cb392561fb826` 对齐：它与用户先前提供的 `v0.19.0` 源码（提交 `e856c878e0a34651bb828e28f0af20d71016a7d4`）相比，程序文件内容相同，差异仅为 README 和两张赞助商图片。已采用 GitHub 版本的这些差异；许可证为 MIT，保留版权文件与页面原作者信息。下载快照保存在 `data/upstream-downloads/`，并未覆盖本仓库的电商扩展代码。
 
 首次运行，在 `infinite-canvas/web` 执行 `npm install --legacy-peer-deps`。之后双击仓库根目录的 `启动广告电商工作台.bat`，打开 `http://127.0.0.1:3000/canvas`，创建画布后点击右上角“广告电商工作台”。本地伴随服务监听 `127.0.0.1:8766`，读取仓库根目录现有 `.env` 中的 DeepSeek 和 SeeAny 密钥，不回传密钥。旧原型继续使用它原有的启动脚本和端口。
 
