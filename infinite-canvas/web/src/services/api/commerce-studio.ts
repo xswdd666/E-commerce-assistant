@@ -1,6 +1,6 @@
 const BASE = "http://127.0.0.1:8766/api";
 
-export type StudioSource = { id: string; name: string; mime: string; bytes: number; parse_status?: string; origin?: string; candidate_group?: number; view_label?: string; reference_ids?: string[]; gallery_plan_id?: string; gallery_item_id?: string; prompt_version_id?: string };
+export type StudioSource = { id: string; name: string; mime: string; bytes: number; extracted_text?: string; parse_status?: string; origin?: string; candidate_group?: number; view_label?: string; reference_ids?: string[]; gallery_plan_id?: string; gallery_item_id?: string; prompt_version_id?: string };
 export type StudioFact = { id: string; field: string; value: string; source_id?: string; status: "待核实" | "已知事实" | "创意假设" };
 export type InferredDetail = { id: string; text: string; status: "待核实" | "已核实"; evidence_source_id: string | null };
 export type ImageObservation = { id: string; task_id: string; original_id: string; candidate_id: string; brief_id: string; fields: Record<string, string>; corrections: Array<{ id: string; field: string; text: string; at: string }>; created: string };

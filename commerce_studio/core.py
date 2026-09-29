@@ -280,12 +280,12 @@ class Store:
         directory = self.root / "files" / project["id"]
         directory.mkdir(parents=True, exist_ok=True)
         (directory / source_id).write_bytes(raw)
-        extracted = ""
-        if mime == "text/plain":
-            try:
-                extracted = raw.decode("utf-8-sig")[:12000]
-            except UnicodeDecodeError:
-                pass
+        from .document_text import extract
+
+        try:
+            extracted = extract(raw, mime)
+        except Exception:
+            extracted = ""
         source = {"id": source_id, "name": name, "mime": mime, "sha256": hashlib.sha256(raw).hexdigest(),
                   "bytes": len(raw), "created": stamp(),
                   "extracted_text": extracted, "parse_status": "可提取文本" if extracted.strip() else "需人工查看"}

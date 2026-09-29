@@ -48,6 +48,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
     const [previewRatio, setPreviewRatio] = useState("1:1");
     const [comparison, setComparison] = useState<{ original: string; generated: string } | null>(null);
     const [factsOffer, setFactsOffer] = useState<{ sourceId: string; quote: StudioQuote } | null>(null);
+    const [previewSourceId, setPreviewSourceId] = useState<string | null>(null);
 
     useEffect(() => { setPreviewQuote(null); setPreviewRequest(null); }, [nodes, connections, selectedNodeId, previewRatio]);
 
@@ -85,6 +86,14 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
     const confirmed = project?.facts.filter((fact) => fact.status === "已知事实") || [];
     const masterRequest: MasterRequest = { group: candidateGroup, view_label: viewLabel, views: viewPreset, source_id: candidateSourceId || "" };
     const candidates = project?.sources.filter((source) => source.origin === "SeeAny candidate") || [];
+    const downloadSource = async (sourceId: string) => {
+        if (!project) return;
+        const source = await studioApi.sourceData(project.id, sourceId);
+        const link = document.createElement("a");
+        link.href = source.data_url;
+        link.download = source.name.replace(/[\\/:*?"<>|]/g, "_");
+        link.click();
+    };
     const exportWholeProject = async () => {
         if (!project) return;
         const canvas = useCanvasStore.getState().openProject(canvasId);
@@ -140,7 +149,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                                 if (file) void act(() => studioApi.source(project.id, file));
                                 event.target.value = "";
                             }} />
-                            {project.sources.filter((source) => !source.origin).map((source) => <div key={source.id}><Typography.Text>{source.name}</Typography.Text> <Typography.Text type="secondary">{Math.round(source.bytes / 1024)} KB · {source.parse_status || "需人工查看"}</Typography.Text>{source.parse_status === "可提取文本" || ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(source.mime) ? <Button type="link" disabled={busy} onClick={() => void act(async () => { setFactsOffer({ sourceId: source.id, quote: await studioApi.factsQuote(project.id, source.id) }); })}>{source.mime.startsWith("image/") ? "识图提取候选事实" : "提取候选事实"}</Button> : null}</div>)}
+                            {project.sources.filter((source) => !source.origin).map((source) => <div key={source.id} className="mt-2"><Typography.Text>{source.name}</Typography.Text> <Typography.Text type="secondary">{Math.round(source.bytes / 1024)} KB · {source.parse_status || "需人工查看"}</Typography.Text><Button type="link" disabled={busy} onClick={() => void act(() => downloadSource(source.id))}>下载原始文件</Button>{source.extracted_text ? <Button type="link" onClick={() => setPreviewSourceId((current) => current === source.id ? null : source.id)}>{previewSourceId === source.id ? "收起正文" : "查看提取正文"}</Button> : null}{source.parse_status === "可提取文本" || ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(source.mime) ? <Button type="link" disabled={busy} onClick={() => void act(async () => { setFactsOffer({ sourceId: source.id, quote: await studioApi.factsQuote(project.id, source.id) }); })}>{source.mime.startsWith("image/") ? "识图提取候选事实" : "提取候选事实"}</Button> : null}{previewSourceId === source.id ? <Typography.Paragraph className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap">{source.extracted_text}</Typography.Paragraph> : null}</div>)}
                             {factsOffer ? <div><Typography.Text>DeepSeek 提取费用：{factsOffer.quote.estimate == null ? "未知" : factsOffer.quote.estimate}</Typography.Text><Button type="primary" className="ml-2" disabled={busy} onClick={() => void act(async () => { await studioApi.factsRun(project.id, factsOffer.sourceId, factsOffer.quote.fingerprint, crypto.randomUUID()); setFactsOffer(null); })}>确认提取</Button></div> : null}
                         </section>
                         <section>

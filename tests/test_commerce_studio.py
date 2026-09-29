@@ -125,6 +125,40 @@ class CommerceStudioTests(unittest.TestCase):
         self.assertEqual(self.project["facts"][0]["status"], "待核实")
         self.assertEqual(self.project["facts"][0]["source_id"], source["id"])
 
+    def test_docx_text_and_tables_feed_reviewable_fact_extraction(self):
+        from docx import Document
+
+        document = Document()
+        document.add_paragraph("产品颜色为白色")
+        table = document.add_table(rows=1, cols=2)
+        table.cell(0, 0).text = "容量"
+        table.cell(0, 1).text = "350 毫升"
+        buffer = io.BytesIO()
+        document.save(buffer)
+        source = self.store.add_source(self.project, "spec.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", base64.b64encode(buffer.getvalue()).decode())
+        self.assertEqual(source["parse_status"], "可提取文本")
+        self.assertIn("产品颜色为白色", source["extracted_text"])
+        self.assertIn("容量 | 350 毫升", source["extracted_text"])
+        self.assertEqual(service.facts_quote(self.project, {"source_id": source["id"]})["input_snapshot"]["kind"], "text")
+
+    def test_pdf_text_extracts_and_scanned_or_broken_documents_need_manual_review(self):
+        from pypdf import PdfWriter
+        from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+        writer = PdfWriter()
+        page = writer.add_blank_page(width=300, height=300)
+        font = writer._add_object(DictionaryObject({NameObject("/Type"): NameObject("/Font"), NameObject("/Subtype"): NameObject("/Type1"), NameObject("/BaseFont"): NameObject("/Helvetica")}))
+        page[NameObject("/Resources")] = DictionaryObject({NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})})
+        stream = DecodedStreamObject()
+        stream.set_data(b"BT /F1 12 Tf 20 250 Td (Capacity 350 ml) Tj ET")
+        page[NameObject("/Contents")] = writer._add_object(stream)
+        buffer = io.BytesIO()
+        writer.write(buffer)
+        source = self.store.add_source(self.project, "spec.pdf", "application/pdf", base64.b64encode(buffer.getvalue()).decode())
+        self.assertIn("Capacity 350 ml", source["extracted_text"])
+        broken = self.store.add_source(self.project, "broken.pdf", "application/pdf", base64.b64encode(b"not a pdf").decode())
+        self.assertEqual(broken["parse_status"], "需人工查看")
+
     def test_image_observation_is_reviewable_and_does_not_approve_facts(self):
         original = self.approved_project()
         candidate_id = self.project["master_versions"][-1]["asset_ids"][0]
