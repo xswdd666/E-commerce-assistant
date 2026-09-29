@@ -75,6 +75,15 @@ class CommerceStudioTests(unittest.TestCase):
             self.store.confirm_brief(self.project, [fact["id"]])
         self.assertEqual(self.project["brief_versions"], [])
 
+    def test_search_projects_sources_and_prompt_history(self):
+        self.store.add_source(self.project, "银色正面.png", "image/png", base64.b64encode(b"image").decode())
+        self.project["legacy_import"] = {"archive": {"prompts": [{"text": "居家银色产品特写"}]}}
+        self.store.save(self.project)
+        self.assertEqual(self.store.search("电热杯")[0]["kind"], "项目")
+        self.assertEqual({item["kind"] for item in self.store.search("银色")}, {"素材", "旧提示词"})
+        with self.assertRaisesRegex(ValueError, "关键词"):
+            self.store.search("")
+
     def test_deepseek_extraction_is_reviewed_before_brief(self):
         source = self.store.add_source(self.project, "merchant.txt", "text/plain", base64.b64encode("杯体为白色".encode()).decode())
         offer = service.facts_quote(self.project, {"source_id": source["id"]})

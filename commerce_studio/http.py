@@ -7,7 +7,7 @@ import base64
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .core import Store
 from . import backup, delivery, finishing, flova_flow, gallery, legacy, prompts, service, video_export
@@ -75,6 +75,8 @@ class Handler(BaseHTTPRequestHandler):
                     "seeany": bool(service.provider_key("SEEANY_API_KEY")), "flova": service.flova.executable() is not None}
         if method == "GET" and parts == ["api", "projects"]:
             return STORE.list()
+        if method == "GET" and parts == ["api", "search"]:
+            return STORE.search(parse_qs(urlparse(self.path).query).get("q", [""])[0])
         if method == "GET" and parts == ["api", "legacy", "projects"]:
             return legacy.list_projects(ROOT / "data" / "workbench.sqlite3")
         if method == "POST" and parts == ["api", "legacy", "import"]:

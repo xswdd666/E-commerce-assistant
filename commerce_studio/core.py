@@ -71,6 +71,25 @@ class Store:
                 for path in self.root.glob("*.json")
                 if (p := json.loads(path.read_text(encoding="utf-8")))]
 
+    def search(self, query):
+        if not isinstance(query, str) or not query.strip() or len(query) > 100:
+            raise ValueError("请输入 1 至 100 字的关键词")
+        needle = query.strip().casefold()
+        matches = []
+        for item in self.list():
+            project = self.load(item["id"])
+            fields = [("项目", project["name"])]
+            fields.extend(("素材", source.get("name", "")) for source in project["sources"])
+            fields.extend(("提示词", prompt.get("text", "")) for prompt in project["prompt_versions"])
+            fields.extend(("旧提示词", prompt.get("text", "")) for prompt in project.get("legacy_import", {}).get("archive", {}).get("prompts", []))
+            for kind, value in fields:
+                if isinstance(value, str) and needle in value.casefold():
+                    matches.append({"project_id": project["id"], "project_name": project["name"], "kind": kind,
+                                    "text": value[:160], "updated": project["updated"]})
+                    if len(matches) >= 100:
+                        return matches
+        return matches
+
     def load(self, project_id):
         try:
             project = json.loads(self._path(project_id).read_text(encoding="utf-8"))

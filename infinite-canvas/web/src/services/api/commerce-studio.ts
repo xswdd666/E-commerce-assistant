@@ -56,6 +56,7 @@ export const studioApi = {
     health: () => request<{ ok: boolean; deepseek: boolean; seeany: boolean; flova: boolean }>("/health"),
     legacyProjects: () => request<Array<{ id: string; name: string; sources: number; facts: number }>>("/legacy/projects"),
     legacyImport: (id: string) => request<StudioProject>("/legacy/import", { id }),
+    search: (query: string) => request<Array<{ project_id: string; project_name: string; kind: string; text: string; updated: string }>>(`/search?q=${encodeURIComponent(query)}`),
     create: (name: string) => request<StudioProject>("/projects", { name }),
     get: (id: string) => request<StudioProject>(`/projects/${id}`),
     source: (id: string, file: File) =>

@@ -1,6 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { App, Button } from "antd";
+import { App, Button, Input } from "antd";
 import { Download, FileUp, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import localforage from "localforage";
@@ -22,6 +22,9 @@ export default function CanvasPage() {
     const { t } = useTranslation();
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
+    const [query, setQuery] = useState("");
+    const [searching, setSearching] = useState(false);
+    const [results, setResults] = useState<Array<{ project_id: string; project_name: string; kind: string; text: string; canvasId?: string }>>([]);
     const inputRef = useRef<HTMLInputElement>(null);
     const autoOpenRef = useRef(false);
     const hydrated = useCanvasStore((state) => state.hydrated);
@@ -39,6 +42,15 @@ export default function CanvasPage() {
         navigate(`/canvas/${id}${agentQuery}${agentHash}`, { replace: Boolean(agentHash) });
     };
     const createAndEnter = () => enterProject(createProject(t("canvas.defaultTitle", { count: projects.length + 1 })));
+    const searchCommerce = async () => {
+        if (!query.trim()) { setResults([]); return; }
+        setSearching(true);
+        try {
+            const [matches, links] = await Promise.all([studioApi.search(query), Promise.all(projects.map(async (item) => ({ canvasId: item.id, commerceId: await localforage.getItem<string>(`commerce-studio:${item.id}`) })))]);
+            setResults(matches.map((item) => ({ ...item, canvasId: links.find((link) => link.commerceId === item.project_id)?.canvasId })));
+        } catch (cause) { message.error(cause instanceof Error ? cause.message : "搜索失败"); }
+        finally { setSearching(false); }
+    };
     const importCanvas = async (file?: File) => {
         if (!file) return;
         try {
@@ -136,6 +148,11 @@ export default function CanvasPage() {
                         </Button>
                     </div>
                 </header>
+
+                <section>
+                    <div className="flex gap-2"><Input value={query} onChange={(event) => setQuery(event.target.value)} onPressEnter={() => void searchCommerce()} placeholder="搜索商品项目、素材或提示词" /><Button loading={searching} onClick={() => void searchCommerce()}>搜索</Button></div>
+                    {results.length ? <div className="mt-3 space-y-2">{results.map((item, index) => <div key={`${item.project_id}-${item.kind}-${index}`} className="flex items-start justify-between gap-3 border-b border-stone-200 py-2 text-sm dark:border-stone-800"><div><span className="font-medium">{item.project_name}</span> · {item.kind}<div className="max-w-3xl break-words text-stone-500">{item.text}</div></div>{item.canvasId ? <Button type="link" onClick={() => enterProject(item.canvasId!)}>打开画布</Button> : <span className="text-stone-500">无关联画布</span>}</div>)}</div> : null}
+                </section>
 
                 {!hydrated ? (
                     <section className="flex min-h-[360px] items-center justify-center border-y border-stone-200 text-sm text-stone-500 dark:border-stone-800">{t("canvas.loading")}</section>
