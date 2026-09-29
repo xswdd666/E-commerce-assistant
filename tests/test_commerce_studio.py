@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import sqlite3
+import sys
 from contextlib import closing
 import subprocess
 import tempfile
@@ -531,6 +532,20 @@ class CommerceStudioTests(unittest.TestCase):
             self.assertNotIn("HTTP_PROXY", os.environ)
             self.assertNotIn("HTTPS_PROXY", os.environ)
             self.assertEqual(os.environ["ALL_PROXY"], "http://proxy.example:8080")
+
+    def test_launcher_bootstraps_missing_dependencies_only_once(self):
+        web = Path(self.temp.name) / "web"
+        web.mkdir()
+        target = Path(self.temp.name) / "python-deps"
+        specs = [None, object(), object(), object()]
+        try:
+            with patch.object(launcher, "WEB", web), patch.object(launcher, "PYTHON_DEPS", target), patch.object(launcher.importlib.util, "find_spec", side_effect=specs), patch.object(launcher.subprocess, "run") as run:
+                launcher.ensure_dependencies()
+        finally:
+            sys.path.remove(str(target))
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args_list[0].args[0][:2], ["npm.cmd", "install"])
+        self.assertIn("--target", run.call_args_list[1].args[0])
 
     def test_cost_ledger_keeps_unknown_separate_from_confirmed_actual(self):
         task = {"id": "billable-task", "kind": "gallery_image", "provider": "SeeAny", "status": "远端运行中",
