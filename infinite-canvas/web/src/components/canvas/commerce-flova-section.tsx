@@ -3,9 +3,9 @@ import { Button, Input, Space, Tag, Typography } from "antd";
 
 import { studioApi, type StudioProject, type StudioQuote } from "@/services/api/commerce-studio";
 
-type Props = { project: StudioProject; busy: boolean; act: (operation: () => Promise<unknown>) => Promise<void> };
+type Props = { project: StudioProject; busy: boolean; act: (operation: () => Promise<unknown>) => Promise<void>; onInsertVideo: (blob: Blob, title: string, projectId: string, deliverableId: string) => Promise<void> };
 
-export function CommerceFlovaSection({ project, busy, act }: Props) {
+export function CommerceFlovaSection({ project, busy, act, onInsertVideo }: Props) {
     const [projectId, setProjectId] = useState("");
     const [offer, setOffer] = useState<StudioQuote | null>(null);
     const [shotOffer, setShotOffer] = useState<{ shotId: string; quote: StudioQuote } | null>(null);
@@ -48,7 +48,7 @@ export function CommerceFlovaSection({ project, busy, act }: Props) {
             {runs.map((task) => <div key={task.id} className="mt-2"><Tag>{task.status}</Tag>Flova 创作 {task.status === "待核对" ? <Button type="link" disabled={busy} onClick={() => void act(() => studioApi.flovaRecover(project.id, task.id))}>恢复远端状态</Button> : null}{task.status === "待审核" && project.video_approval?.task_id !== task.id ? <Button type="link" disabled={busy} onClick={() => void act(() => studioApi.flovaApprove(project.id, task.id))}>已在 Flova 核对，批准导出</Button> : null}{project.video_approval?.task_id === task.id ? <Tag color="success">已批准</Tag> : null}{task.error ? <Typography.Paragraph type="danger">{task.error}</Typography.Paragraph> : null}{task.pending_actions?.map((action, index) => <Typography.Paragraph key={index} type="warning">待确认：{action.message || action.type || "请在 Flova 项目中查看"}</Typography.Paragraph>)}</div>)}
             {project.video_approval ? <div className="mt-3 border-t pt-2"><Typography.Text strong>Flova 成片导出</Typography.Text><Typography.Paragraph type="secondary">先核对时间线可导出，再明确提交；完成的 MP4 下载到本机项目目录并进入完整备份。</Typography.Paragraph><Button disabled={busy} onClick={() => void act(async () => { setExportOffer(await studioApi.flovaExportQuote(project.id)); })}>检查导出条件与费用</Button>{exportOffer ? <div className="mt-2">费用：{exportOffer.estimate == null ? "未知" : exportOffer.estimate}<Button type="primary" className="ml-2" disabled={busy} onClick={() => void act(async () => { await studioApi.flovaExportRun(project.id, exportOffer.fingerprint, crypto.randomUUID()); setExportOffer(null); })}>确认导出 Flova 成片</Button></div> : null}</div> : null}
             {exports.map((task) => <div key={task.id} className="mt-2"><Tag>{task.status}</Tag>成片导出 {task.status === "待核对" || task.status === "待下载" ? <Button type="link" disabled={busy} onClick={() => void act(() => studioApi.flovaExportRecover(project.id, task.id))}>恢复导出状态</Button> : null}{task.error ? <Typography.Text type="danger">{task.error}</Typography.Text> : null}</div>)}
-            {project.deliverables.filter((item) => ["video", "shot_video", "finished_video"].includes(item.kind)).map((item) => <div key={item.id} className="mt-2"><Tag color="success">{item.kind === "video" ? "Flova 原片" : item.kind === "shot_video" ? "Flova 镜头" : "收尾成片"}</Tag>{item.name} · {(item.bytes / 1024 / 1024).toFixed(1)} MB<Button type="link" disabled={busy} onClick={() => void act(() => downloadVideo(item.id, item.name))}>下载 MP4</Button></div>)}
+            {project.deliverables.filter((item) => ["video", "shot_video", "finished_video"].includes(item.kind)).map((item) => <div key={item.id} className="mt-2"><Tag color="success">{item.kind === "video" ? "Flova 原片" : item.kind === "shot_video" ? "Flova 镜头" : "收尾成片"}</Tag>{item.name} · {(item.bytes / 1024 / 1024).toFixed(1)} MB<Button type="link" disabled={busy} onClick={() => void act(() => downloadVideo(item.id, item.name))}>下载 MP4</Button><Button type="link" disabled={busy} onClick={() => void act(async () => { const blob = await studioApi.videoBlob(project.id, item.id); await onInsertVideo(blob, item.name, project.id, item.id); })}>加入画布视频节点</Button></div>)}
         </>}
     </section>;
 }

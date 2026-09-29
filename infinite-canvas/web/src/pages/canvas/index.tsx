@@ -81,6 +81,9 @@ export default function CanvasPage() {
                     await (key.startsWith("image:") ? setImageBlob(key, typed) : setMediaBlob(key, typed));
                 }));
                 const remapped = JSON.parse(JSON.stringify(exported.project, (_key, value) => typeof value === "string" ? newKeys.get(value) || value : value));
+                for (const node of remapped.nodes) {
+                    if (node.metadata?.commerceAsset?.projectId === restored.restored_from) node.metadata.commerceAsset.projectId = restored.id;
+                }
                 const newCanvasId = importProject(remapped);
                 await localforage.setItem(`commerce-studio:${newCanvasId}`, restored.id);
                 message.success("完整商品项目已恢复；远端任务状态请重新核对");

@@ -19,9 +19,9 @@ import { createZip } from "@/lib/zip";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
-type Props = { open: boolean; onClose: () => void; canvasId: string; title: string; nodes: CanvasNodeData[]; connections: CanvasConnection[]; selectedNodeId?: string; onInsertImage: (dataUrl: string, title: string) => Promise<void>; onInsertText: (text: string, title: string) => void };
+type Props = { open: boolean; onClose: () => void; canvasId: string; title: string; nodes: CanvasNodeData[]; connections: CanvasConnection[]; selectedNodeId?: string; onInsertImage: (dataUrl: string, title: string) => Promise<void>; onInsertText: (text: string, title: string) => void; onInsertVideo: (blob: Blob, title: string, projectId: string, deliverableId: string) => Promise<void> };
 
-export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, connections, selectedNodeId, onInsertImage, onInsertText }: Props) {
+export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, connections, selectedNodeId, onInsertImage, onInsertText, onInsertVideo }: Props) {
     const [project, setProject] = useState<StudioProject | null>(null);
     const [legacyProjects, setLegacyProjects] = useState<Array<{ id: string; name: string; sources: number; facts: number }>>([]);
     const [legacyId, setLegacyId] = useState<string>();
@@ -215,7 +215,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                         <CommercePlanSection project={project} busy={busy} act={act} />
                         <CommercePromptSection project={project} busy={busy} act={act} onInsertImage={onInsertImage} onInsertText={onInsertText} />
                         <CommerceGallerySection project={project} busy={busy} act={act} />
-                        <CommerceFlovaSection project={project} busy={busy} act={act} />
+                        <CommerceFlovaSection project={project} busy={busy} act={act} onInsertVideo={onInsertVideo} />
                         <CommerceFinishingSection project={project} busy={busy} act={act} />
                         <CommerceDeliverySection project={project} busy={busy} act={act} />
                         <section>

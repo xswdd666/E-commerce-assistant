@@ -3004,7 +3004,7 @@ function InfiniteCanvasPage() {
                         position: { x: center.x - nextSize.width / 2, y: center.y - nextSize.height / 2 },
                         width: nextSize.width,
                         height: nextSize.height,
-                        metadata: { content: payload.url, storageKey: payload.storageKey, status: NODE_STATUS_SUCCESS, naturalWidth: payload.width, naturalHeight: payload.height },
+                        metadata: { content: payload.url, storageKey: payload.storageKey, status: NODE_STATUS_SUCCESS, naturalWidth: payload.width, naturalHeight: payload.height, bytes: payload.bytes, mimeType: payload.mimeType, commerceAsset: payload.commerceAsset },
                     },
                 ]);
                 setSelectedNodeIds(new Set([id]));
@@ -3147,6 +3147,11 @@ function InfiniteCanvasPage() {
                     selectedNodeId={[...selectedNodeIds][0]}
                     onInsertImage={(dataUrl, title) => insertAssistantImage({ id: nanoid(), prompt: title, dataUrl })}
                     onInsertText={insertAssistantText}
+                    onInsertVideo={async (blob, title, projectId, deliverableId) => {
+                        const media = await uploadMediaFile(blob, "video");
+                        handleAssetInsert({ kind: "video", url: media.url, storageKey: media.storageKey, width: media.width, height: media.height, bytes: media.bytes, mimeType: media.mimeType,
+                            title, commerceAsset: { projectId, deliverableId } });
+                    }}
                 />
 
                 <InfiniteCanvas

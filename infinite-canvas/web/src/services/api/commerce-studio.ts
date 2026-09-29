@@ -12,6 +12,7 @@ export type PromptFields = { product: string; scene: string; composition: string
 export type PromptVersion = { id: string; parent_id: string | null; brief_id: string; master_id: string; fields: PromptFields; text: string; origin: string; changed_fields: string[]; created: string };
 export type StudioProject = {
     id: string;
+    restored_from?: string;
     name: string;
     legacy_import?: { id: string; imported_at: string; review_required: string; archive: unknown };
     sources: StudioSource[];
