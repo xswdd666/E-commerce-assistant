@@ -598,6 +598,9 @@ class CommerceStudioTests(unittest.TestCase):
         self.assertIn("--target", run.call_args_list[1].args[0])
 
     def test_cost_ledger_keeps_unknown_separate_from_confirmed_actual(self):
+        with self.assertRaisesRegex(ValueError, "成本目标金额无效"):
+            self.store.set_cost_target(self.project, float("nan"), "CNY")
+        self.store.set_cost_target(self.project, 10, "CNY")
         task = {"id": "billable-task", "kind": "gallery_image", "provider": "SeeAny", "status": "远端运行中",
                 "estimate": None, "actual": None, "currency": None, "created": "2026-09-29T00:00:00+00:00"}
         self.project["tasks"].append(task)
@@ -611,6 +614,7 @@ class CommerceStudioTests(unittest.TestCase):
         self.assertEqual(entry["actual"], 0.5)
         self.assertEqual(entry["currency"], "CNY")
         self.assertEqual(entry["status"], "失败")
+        self.assertIsNone(self.store.set_cost_target(self.project, None, ""))
 
     def test_supplier_bill_reconciliation_preserves_original_units_and_corrections(self):
         task = {"id": "cost-task", "kind": "preview", "provider": "SeeAny", "status": "失败",
@@ -719,6 +723,7 @@ class CommerceStudioTests(unittest.TestCase):
 
     def test_canvas_preview_uses_snapshot_and_saves_original_reference(self):
         self.approved_project()
+        self.assertEqual(self.store.set_cost_target(self.project, 0, "CNY"), {"amount": 0.0, "currency": "CNY"})
         _, master_raw = self.store.source_bytes(self.project, self.project["master_versions"][-1]["asset_ids"][0])
         body = {"canvas_project_id": "canvas-1", "config_node_id": "config-1", "reference_node_id": "image-1",
                 "connection_ids": ["edge-image", "edge-text"], "prompt": "白底实拍风格", "ratio": "1:1",
@@ -734,6 +739,7 @@ class CommerceStudioTests(unittest.TestCase):
         source, raw = self.store.source_bytes(self.project, task["source_id"])
         self.assertEqual(source["canvas_node_id"], "image-1")
         self.assertEqual(raw, master_raw)
+        self.assertEqual(self.project["cost_target"]["amount"], 0)
 
 
 if __name__ == "__main__":

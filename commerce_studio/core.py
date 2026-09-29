@@ -10,6 +10,7 @@ import base64
 import binascii
 import hashlib
 import json
+import math
 import shutil
 import threading
 import uuid
@@ -64,7 +65,7 @@ class Store:
                    "prompt_versions": [], "prompt_adoption": None, "prompt_reviews": [],
                    "image_observations": [],
                    "video_approval": None, "shot_approvals": {}, "deliverables": [], "video_edits": [],
-                   "nodes": [], "edges": [], "tasks": [], "costs": [], "chat": []}
+                   "nodes": [], "edges": [], "tasks": [], "costs": [], "cost_target": None, "chat": []}
         self.save(project)
         return project
 
@@ -125,6 +126,7 @@ class Store:
             project.setdefault("deliverables", [])
             project.setdefault("video_edits", [])
             project.setdefault("costs", [])
+            project.setdefault("cost_target", None)
             return project
         except FileNotFoundError as exc:
             raise ValueError("项目不存在") from exc
@@ -157,6 +159,24 @@ class Store:
             tmp = path.with_suffix(".tmp")
             tmp.write_text(json.dumps(project, ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(path)
+
+    def set_cost_target(self, project, amount, currency):
+        if amount is None:
+            project["cost_target"] = None
+        else:
+            if isinstance(amount, bool):
+                raise ValueError("成本目标金额无效")
+            try:
+                amount = float(amount)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("成本目标金额无效") from exc
+            if not math.isfinite(amount) or amount < 0:
+                raise ValueError("成本目标金额无效")
+            if not isinstance(currency, str) or not currency.strip():
+                raise ValueError("请填写成本目标的原始单位")
+            project["cost_target"] = {"amount": amount, "currency": currency.strip()}
+        self.save(project)
+        return project["cost_target"]
 
     def settle_cost(self, project, task_id, amount, currency, receipt):
         task = next((t for t in project["tasks"] if t.get("id") == task_id and t.get("provider")), None)

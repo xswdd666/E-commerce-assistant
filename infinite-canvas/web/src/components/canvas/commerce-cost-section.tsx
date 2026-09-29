@@ -13,6 +13,11 @@ export function CommerceCostSection({ project, busy, act, nodeNames }: Props) {
     const [purpose, setPurpose] = useState<string>("全部");
     const [node, setNode] = useState("全部");
     const [dimension, setDimension] = useState("provider");
+    const [targetEditing, setTargetEditing] = useState(false);
+    const [targetAmount, setTargetAmount] = useState<number | null>(null);
+    const [targetCurrency, setTargetCurrency] = useState("CNY");
+    const target = project.cost_target;
+    const targetSpent = target ? project.costs.reduce((sum, item) => sum + (item.currency === target.currency && item.actual != null ? item.actual : 0), 0) : 0;
     const visible = project.costs.filter((item) => (purpose === "全部" || item.purpose === purpose) && (node === "全部" || (item.node_id || "项目级") === node));
     const totals = new Map<string, { actual: number; estimate: number; estimated: number; pending: number }>();
     const groups = new Map<string, { label: string; currency: string; actual: number; estimate: number; estimated: number; pending: number }>();
@@ -42,6 +47,9 @@ export function CommerceCostSection({ project, busy, act, nodeNames }: Props) {
 
     return <section>
         <Typography.Title level={5}>费用流水</Typography.Title>
+        <Typography.Paragraph>成本目标：{target ? `${target.amount.toFixed(2)} ${target.currency}；同单位已确认实付 ${targetSpent.toFixed(2)}${targetSpent > target.amount ? "，已超过目标" : ""}` : "未设置"}。仅供参考，不阻止创作提交。</Typography.Paragraph>
+        {targetEditing ? <Space wrap><InputNumber min={0} value={targetAmount} onChange={setTargetAmount} placeholder="目标金额" /><Input value={targetCurrency} onChange={(event) => setTargetCurrency(event.target.value)} placeholder="原始单位" /><Button type="primary" disabled={busy || targetAmount == null || !targetCurrency.trim()} onClick={() => void act(async () => { await studioApi.setCostTarget(project.id, targetAmount, targetCurrency); setTargetEditing(false); })}>保存目标</Button><Button onClick={() => setTargetEditing(false)}>取消</Button></Space>
+            : <Space><Button disabled={busy} onClick={() => { setTargetAmount(target?.amount ?? null); setTargetCurrency(target?.currency || "CNY"); setTargetEditing(true); }}>{target ? "修改目标" : "设置成本目标"}</Button>{target ? <Button disabled={busy} onClick={() => void act(() => studioApi.setCostTarget(project.id, null, ""))}>清除目标</Button> : null}</Space>}
         <Typography.Paragraph>共 {visible.length} 笔任务；{visible.filter((item) => item.actual == null).length} 笔待结算；{visible.filter((item) => item.estimate == null).length} 笔预估未知。预估与实付分开计算，币种和积分不混加。</Typography.Paragraph>
         {[...totals].map(([currency, total]) => <Typography.Paragraph key={currency} className="mb-1">{currency}：已确认实付 {total.actual.toFixed(2)}；已知预估 {total.estimated ? total.estimate.toFixed(2) : "未知"}；待结算 {total.pending} 笔</Typography.Paragraph>)}
         <Space wrap><Select value={purpose} onChange={setPurpose} options={["全部", "草稿", "正式"].map((value) => ({ value, label: value }))} /><Select value={node} onChange={setNode} options={[{ value: "全部", label: "全部节点" }, ...[...new Set(project.costs.map((item) => item.node_id || "项目级"))].map((value) => ({ value, label: value === "项目级" ? value : nodeNames[value] || value }))]} /><Select value={dimension} onChange={setDimension} options={[{ value: "provider", label: "按供应商" }, { value: "stage", label: "按阶段" }, { value: "node", label: "按节点" }, { value: "purpose", label: "按用途" }, { value: "date", label: "按提交日期" }]} /></Space>
