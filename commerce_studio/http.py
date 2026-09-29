@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .core import Store
-from . import flova_flow, gallery, service
+from . import backup, flova_flow, gallery, service
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -167,6 +167,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             parts = [part for part in urlparse(self.path).path.split("/") if part]
+            if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "backup":
+                project = STORE.load(parts[2])
+                self._send_archive(backup.export_project(STORE, project), f"commerce-project-{project['id']}.zip")
+                return
             if len(parts) == 5 and parts[:2] == ["api", "projects"] and parts[3:] == ["gallery", "export"]:
                 project = STORE.load(parts[2])
                 self._send_archive(gallery.export_gallery(STORE, project), f"commerce-gallery-{project['id']}.zip")
@@ -177,6 +181,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
+            if urlparse(self.path).path == "/api/restore":
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0 or length > 250 * 1024 * 1024:
+                    raise ValueError("备份为空或超过 250 MB")
+                self._send(200, backup.restore_project(STORE, self.rfile.read(length)))
+                return
             self._send(200, self._route("POST"))
         except (ValueError, json.JSONDecodeError) as exc:
             self._send(400, {"error": str(exc)})

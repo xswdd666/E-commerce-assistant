@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { App, Button } from "antd";
 import { Download, FileUp, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import localforage from "localforage";
 
 import { readZip } from "@/lib/zip";
 import { setMediaBlob } from "@/services/file-storage";
@@ -14,6 +15,7 @@ import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { hasAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
+import { studioApi } from "@/services/api/commerce-studio";
 
 export default function CanvasPage() {
     const { message } = App.useApp();
@@ -41,6 +43,37 @@ export default function CanvasPage() {
         if (!file) return;
         try {
             const zip = await readZip(file);
+            const bundleFile = zip.get("bundle.json");
+            if (bundleFile) {
+                const bundle = JSON.parse(await bundleFile.text()) as { format?: string; version?: number };
+                if (bundle.format !== "commerce-studio-bundle" || bundle.version !== 1) throw new Error("unsupported commerce bundle");
+                const canvasFile = zip.get("canvas.zip");
+                const commerceFile = zip.get("commerce.zip");
+                if (!canvasFile || !commerceFile) throw new Error("missing bundle component");
+                const canvasZip = await readZip(canvasFile);
+                const projectFile = canvasZip.get("projects.json");
+                if (!projectFile) throw new Error("missing canvas project");
+                const data = JSON.parse(await projectFile.text()) as CanvasExportFile;
+                if (data.app !== "infinite-canvas" || data.version !== 3 || data.projects.length !== 1) throw new Error("invalid canvas project");
+                const exported = data.projects[0];
+                const newKeys = new Map<string, string>();
+                for (const item of exported.files) {
+                    if (!canvasZip.has(item.path)) throw new Error("missing canvas asset");
+                    newKeys.set(item.storageKey, `${item.storageKey.split(":", 1)[0]}:${crypto.randomUUID()}`);
+                }
+                const restored = await studioApi.restoreBlob(commerceFile);
+                await Promise.all(exported.files.map(async (item) => {
+                    const blob = canvasZip.get(item.path)!;
+                    const typed = blob.slice(0, blob.size, item.mimeType);
+                    const key = newKeys.get(item.storageKey)!;
+                    await (key.startsWith("image:") ? setImageBlob(key, typed) : setMediaBlob(key, typed));
+                }));
+                const remapped = JSON.parse(JSON.stringify(exported.project, (_key, value) => typeof value === "string" ? newKeys.get(value) || value : value));
+                const newCanvasId = importProject(remapped);
+                await localforage.setItem(`commerce-studio:${newCanvasId}`, restored.id);
+                message.success("完整商品项目已恢复；远端任务状态请重新核对");
+                return;
+            }
             const projectFile = zip.get("projects.json");
             if (!projectFile) throw new Error("missing projects.json");
             const data = JSON.parse(await projectFile.text()) as CanvasExportFile;
@@ -56,8 +89,8 @@ export default function CanvasPage() {
             );
             data.projects.forEach((item) => importProject(item.project));
             message.success(t("canvas.imported", { count: data.projects.length }));
-        } catch {
-            message.error(t("canvas.importFailed"));
+        } catch (cause) {
+            message.error(cause instanceof Error ? cause.message : t("canvas.importFailed"));
         } finally {
             if (inputRef.current) inputRef.current.value = "";
         }

@@ -2,16 +2,19 @@ import base64
 import io
 import json
 import tempfile
+import threading
 import unittest
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
+from http.server import ThreadingHTTPServer
+from urllib.request import Request, urlopen
 
 from PIL import Image
 
 from commerce_studio.core import Store
 from commerce_studio import service
-from commerce_studio import flova_flow, gallery
+from commerce_studio import backup, flova_flow, gallery, http as bridge
 
 
 class CommerceStudioTests(unittest.TestCase):
@@ -272,6 +275,45 @@ class CommerceStudioTests(unittest.TestCase):
         self.assertEqual(entry["actual"], 0.5)
         self.assertEqual(entry["currency"], "CNY")
         self.assertEqual(entry["status"], "失败")
+
+    def test_companion_backup_restores_sources_versions_and_remote_review_gate(self):
+        self.approved_project()
+        plan = gallery.default_plan(self.store, self.project)
+        gallery.approve_plan(self.store, self.project, plan["id"])
+        self.project["tasks"].append({"id": "remote-task", "kind": "gallery_image", "provider": "SeeAny",
+                                      "status": "远端运行中", "remote_id": "seeany-123", "estimate": None,
+                                      "actual": None, "currency": None, "created": "2026-09-29T00:00:00+00:00"})
+        self.store.save(self.project)
+        archive = backup.export_project(self.store, self.project)
+        restored = backup.restore_project(self.store, archive)
+        self.assertNotEqual(restored["id"], self.project["id"])
+        self.assertEqual(restored["restored_from"], self.project["id"])
+        self.assertEqual(restored["gallery_approval"], plan["id"])
+        self.assertEqual(restored["tasks"][-1]["status"], "待核对")
+        source_id = self.project["sources"][0]["id"]
+        self.assertEqual(self.store.source_bytes(restored, source_id)[1], self.store.source_bytes(self.project, source_id)[1])
+        self.assertEqual(len(restored["costs"]), len(self.project["costs"]))
+
+    def test_public_backup_routes_round_trip_without_exposing_keys(self):
+        source = self.store.add_source(self.project, "source.txt", "text/plain", base64.b64encode(b"merchant facts").decode())
+        server = ThreadingHTTPServer(("127.0.0.1", 0), bridge.Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        with patch.object(bridge, "STORE", self.store):
+            worker.start()
+            try:
+                base = f"http://127.0.0.1:{server.server_port}/api"
+                with urlopen(f"{base}/projects/{self.project['id']}/backup") as response:
+                    archive = response.read()
+                request = Request(f"{base}/restore", data=archive, headers={"Content-Type": "application/zip"}, method="POST")
+                with urlopen(request) as response:
+                    restored = json.load(response)
+                self.assertNotEqual(restored["id"], self.project["id"])
+                self.assertEqual(self.store.source_bytes(restored, source["id"])[1], b"merchant facts")
+                self.assertNotIn(b"DEEPSEEK_API_KEY", archive)
+            finally:
+                server.shutdown()
+                server.server_close()
+                worker.join(timeout=2)
 
     def test_canvas_preview_uses_snapshot_and_saves_original_reference(self):
         self.approved_project()

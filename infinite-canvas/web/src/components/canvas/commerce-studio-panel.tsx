@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Drawer, Input, Select, Space, Tag, Typography } from "antd";
 import localforage from "localforage";
+import { saveAs } from "file-saver";
 
 import { studioApi, type MasterRequest, type PreviewRequest, type StudioFact, type StudioProject, type StudioQuote } from "@/services/api/commerce-studio";
 import { buildNodeGenerationContext, hydrateNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
@@ -8,6 +9,9 @@ import { CanvasNodeType } from "@/types/canvas";
 import { CommercePlanSection } from "@/components/canvas/commerce-plan-section";
 import { CommerceFlovaSection } from "@/components/canvas/commerce-flova-section";
 import { CommerceGallerySection } from "@/components/canvas/commerce-gallery-section";
+import { createCanvasExportBlob } from "@/lib/canvas/canvas-export";
+import { createZip } from "@/lib/zip";
+import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
 type Props = { open: boolean; onClose: () => void; canvasId: string; title: string; nodes: CanvasNodeData[]; connections: CanvasConnection[]; selectedNodeId?: string; onInsertImage: (dataUrl: string, title: string) => Promise<void> };
@@ -75,6 +79,18 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
         return totals;
     }, {}));
     const pendingCostCount = project?.costs.filter((entry) => entry.actual == null).length || 0;
+    const exportWholeProject = async () => {
+        if (!project) return;
+        const canvas = useCanvasStore.getState().openProject(canvasId);
+        if (!canvas) throw new Error("无法读取当前画布项目");
+        const [canvasZip, commerceZip] = await Promise.all([createCanvasExportBlob([canvas]), studioApi.backupBlob(project.id)]);
+        const bundle = await createZip([
+            { name: "bundle.json", data: JSON.stringify({ format: "commerce-studio-bundle", version: 1, canvas_id: canvasId, commerce_id: project.id }) },
+            { name: "canvas.zip", data: canvasZip },
+            { name: "commerce.zip", data: commerceZip },
+        ]);
+        saveAs(bundle, `${project.name.replace(/[\\/:*?"<>|]/g, "_")}-完整备份.zip`);
+    };
 
     return (
         <Drawer title="广告电商工作台" open={open} onClose={onClose} width={460} styles={{ body: { overflowY: "auto" } }}>
@@ -184,6 +200,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                             {project.costs.map((entry) => <div key={entry.id}><Tag>{entry.provider}</Tag>{entry.stage} · {entry.purpose} · {entry.status} · 实付 {entry.actual == null ? "未知" : `${entry.actual} ${entry.currency || "单位待核实"}`}</div>)}
                             {project.tasks.filter((task) => task.kind === "preview").map((task) => <div key={task.id} className="mt-2"><Tag>{task.status}</Tag>画布试图 <Button type="link" disabled={busy} onClick={() => void act(() => studioApi.sync(project.id, task.id))}>同步状态</Button>{task.asset_ids?.length && task.source_id ? <Button type="link" onClick={() => void (async () => { try { const [original, generated] = await Promise.all([studioApi.sourceData(project.id, task.source_id!), studioApi.sourceData(project.id, task.asset_ids![0])]); setComparison({ original: original.data_url, generated: generated.data_url }); } catch (cause) { setError(cause instanceof Error ? cause.message : "读取图片失败"); } })()}>对照查看</Button> : null}</div>)}
                         </section>
+                        <section><Typography.Title level={5}>项目备份</Typography.Title><Typography.Paragraph type="secondary">将当前画布、浏览器媒体文件、本地原图、版本和任务记录一起打包。恢复入口位于画布列表的“导入”。</Typography.Paragraph><Button disabled={busy} onClick={() => void act(exportWholeProject)}>下载完整项目备份</Button></section>
                     </>
                 )}
             </Space>

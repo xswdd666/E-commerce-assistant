@@ -96,4 +96,18 @@ export const studioApi = {
         }
         return response.blob();
     },
+    backupBlob: async (id: string) => {
+        const response = await fetch(`${BASE}/projects/${id}/backup`);
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || "商品项目备份失败");
+        }
+        return response.blob();
+    },
+    restoreBlob: async (archive: Blob) => {
+        const response = await fetch(`${BASE}/restore`, { method: "POST", headers: { "Content-Type": "application/zip" }, body: archive });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "商品项目恢复失败");
+        return result as StudioProject;
+    },
 };
