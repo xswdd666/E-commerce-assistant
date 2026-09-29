@@ -117,6 +117,40 @@ class Store:
             tmp.write_text(json.dumps(project, ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(path)
 
+    def settle_cost(self, project, task_id, amount, currency, receipt):
+        task = next((t for t in project["tasks"] if t.get("id") == task_id and t.get("provider")), None)
+        if not task:
+            raise ValueError("费用任务不存在")
+        if isinstance(amount, bool):
+            raise ValueError("实付金额无效")
+        try:
+            amount = float(amount)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("实付金额无效") from exc
+        if not 0 <= amount <= 1_000_000 or amount != amount:
+            raise ValueError("实付金额超出范围")
+        if not isinstance(currency, str) or not currency.strip() or len(currency) > 20:
+            raise ValueError("请填写供应商账单原始单位")
+        if not isinstance(receipt, str) or not receipt.strip() or len(receipt) > 500:
+            raise ValueError("请填写账单核对来源")
+        self.save(project)
+        entry = next(c for c in project["costs"] if c["task_id"] == task_id)
+        currency, receipt = currency.strip(), receipt.strip()
+        if (entry["actual"], entry["currency"], entry.get("receipt_source")) == (amount, currency, receipt):
+            return entry
+        if entry["actual"] is not None:
+            entry.setdefault("revisions", []).append({"actual": entry["actual"], "currency": entry["currency"],
+                                                        "receipt_source": entry.get("receipt_source"), "replaced_at": stamp()})
+        task["actual"] = amount
+        task["currency"] = currency
+        entry["actual"] = amount
+        entry["currency"] = currency
+        entry["receipt_source"] = receipt
+        entry["settlement_method"] = "人工核对供应商账单"
+        entry["settled_at"] = stamp()
+        self.save(project)
+        return entry
+
     def add_node(self, project, kind, data=None):
         if kind not in PORTS:
             raise ValueError("不支持的画布节点类型")

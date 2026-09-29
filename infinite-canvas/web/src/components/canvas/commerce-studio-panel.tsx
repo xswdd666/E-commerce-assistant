@@ -12,6 +12,7 @@ import { CommerceGallerySection } from "@/components/canvas/commerce-gallery-sec
 import { CommercePromptSection } from "@/components/canvas/commerce-prompt-section";
 import { CommerceFinishingSection } from "@/components/canvas/commerce-finishing-section";
 import { CommerceDeliverySection } from "@/components/canvas/commerce-delivery-section";
+import { CommerceCostSection } from "@/components/canvas/commerce-cost-section";
 import { createCanvasExportBlob } from "@/lib/canvas/canvas-export";
 import { createZip } from "@/lib/zip";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
@@ -77,11 +78,6 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
     const confirmed = project?.facts.filter((fact) => fact.status === "已知事实") || [];
     const masterRequest: MasterRequest = { group: candidateGroup, view_label: viewLabel, views: viewPreset, source_id: candidateSourceId || "" };
     const candidates = project?.sources.filter((source) => source.origin === "SeeAny candidate") || [];
-    const confirmedCosts = Object.entries((project?.costs || []).reduce<Record<string, number>>((totals, entry) => {
-        if (entry.actual != null && entry.currency) totals[entry.currency] = (totals[entry.currency] || 0) + entry.actual;
-        return totals;
-    }, {}));
-    const pendingCostCount = project?.costs.filter((entry) => entry.actual == null).length || 0;
     const exportWholeProject = async () => {
         if (!project) return;
         const canvas = useCanvasStore.getState().openProject(canvasId);
@@ -201,11 +197,10 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                             </Space> : null}
                         </section>
                         <section>
-                            <Typography.Title level={5}>任务与费用</Typography.Title>
-                            <Typography.Paragraph>任务 {project.tasks.length} 个；待结算 {pendingCostCount} 个。{confirmedCosts.length ? `已确认实付：${confirmedCosts.map(([unit, amount]) => `${amount.toFixed(2)} ${unit}`).join("、")}` : "尚无供应商返回的可信实付金额"}。预估与实付分开记录；未知价格不阻止手动提交。</Typography.Paragraph>
-                            {project.costs.map((entry) => <div key={entry.id}><Tag>{entry.provider}</Tag>{entry.stage} · {entry.purpose} · {entry.status} · 实付 {entry.actual == null ? "未知" : `${entry.actual} ${entry.currency || "单位待核实"}`}</div>)}
+                            <Typography.Title level={5}>试图任务</Typography.Title>
                             {project.tasks.filter((task) => task.kind === "preview").map((task) => <div key={task.id} className="mt-2"><Tag>{task.status}</Tag>画布试图 <Button type="link" disabled={busy} onClick={() => void act(() => studioApi.sync(project.id, task.id))}>同步状态</Button>{task.asset_ids?.length && task.source_id ? <Button type="link" onClick={() => void (async () => { try { const [original, generated] = await Promise.all([studioApi.sourceData(project.id, task.source_id!), studioApi.sourceData(project.id, task.asset_ids![0])]); setComparison({ original: original.data_url, generated: generated.data_url }); } catch (cause) { setError(cause instanceof Error ? cause.message : "读取图片失败"); } })()}>对照查看</Button> : null}</div>)}
                         </section>
+                        <CommerceCostSection project={project} busy={busy} act={act} />
                         <section><Typography.Title level={5}>项目备份</Typography.Title><Typography.Paragraph type="secondary">将当前画布、浏览器媒体文件、本地原图、版本和任务记录一起打包。恢复入口位于画布列表的“导入”。</Typography.Paragraph><Button disabled={busy} onClick={() => void act(exportWholeProject)}>下载完整项目备份</Button></section>
                     </>
                 )}

@@ -155,6 +155,8 @@ class Handler(BaseHTTPRequestHandler):
                     return finishing.save_edit(STORE, project, body.get("clips"), body.get("parent_id"))
                 if parts[3:] == ["finishing", "render"]:
                     return finishing.render(STORE, project, body.get("edit_id"))
+                if len(parts) == 6 and parts[3] == "costs" and parts[5] == "settle":
+                    return STORE.settle_cost(project, parts[4], body.get("amount"), body.get("currency"), body.get("receipt"))
                 if parts[3:] == ["gallery", "default"]:
                     return gallery.default_plan(STORE, project)
                 if parts[3:] == ["gallery", "plans"]:

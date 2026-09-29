@@ -367,6 +367,24 @@ class CommerceStudioTests(unittest.TestCase):
         self.assertEqual(entry["currency"], "CNY")
         self.assertEqual(entry["status"], "失败")
 
+    def test_supplier_bill_reconciliation_preserves_original_units_and_corrections(self):
+        task = {"id": "cost-task", "kind": "preview", "provider": "SeeAny", "status": "失败",
+                "estimate": None, "actual": None, "currency": None, "created": "2026-09-29T00:00:00+00:00"}
+        self.project["tasks"].append(task)
+        with self.assertRaisesRegex(ValueError, "账单核对来源"):
+            self.store.settle_cost(self.project, task["id"], 0.3, "CNY", "")
+        with self.assertRaisesRegex(ValueError, "实付金额无效"):
+            self.store.settle_cost(self.project, task["id"], True, "CNY", "账单")
+        entry = self.store.settle_cost(self.project, task["id"], 0.3, "CNY", "SeeAny 后台账单 123")
+        self.assertEqual(entry["actual"], 0.3)
+        self.assertEqual(entry["settlement_method"], "人工核对供应商账单")
+        self.assertEqual(len(entry.get("revisions", [])), 0)
+        self.store.settle_cost(self.project, task["id"], 0.3, "CNY", "SeeAny 后台账单 123")
+        self.assertEqual(len(entry.get("revisions", [])), 0)
+        self.store.settle_cost(self.project, task["id"], 0.5, "CNY", "更正账单 124")
+        self.assertEqual(len(entry["revisions"]), 1)
+        self.assertEqual(entry["revisions"][-1]["actual"], 0.3)
+
     def test_companion_backup_restores_sources_versions_and_remote_review_gate(self):
         self.approved_project()
         plan = gallery.default_plan(self.store, self.project)
