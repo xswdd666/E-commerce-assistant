@@ -21,7 +21,7 @@ from PIL import Image
 
 from commerce_studio.core import Store
 from commerce_studio import service
-from commerce_studio import backup, delivery, finishing, flova_flow, gallery, http as bridge, launcher, legacy, observations, prompts, video_export
+from commerce_studio import backup, delivery, finishing, flova_flow, gallery, http as bridge, jev, launcher, legacy, observations, prompts, video_export
 
 
 class CommerceStudioTests(unittest.TestCase):
@@ -634,6 +634,37 @@ class CommerceStudioTests(unittest.TestCase):
         self.assertEqual(resolved["status"], "失败")
         self.assertEqual(resolved["idempotency_key"], "request-123")
         self.assertEqual(len(project["tasks"]), 2)
+
+    def test_jev_sidecar_records_choice_without_approving_direction(self):
+        self.approved_project()
+        brief_id = self.project["brief_versions"][-1]["id"]
+        master_id = self.project["master_versions"][-1]["id"]
+        directions = [{"id": f"direction-{index}", "brief_id": brief_id, "master_id": master_id,
+                       "title": f"方向 {index}", "audience": "家庭", "opening": "产品亮相",
+                       "selling_point": "已确认卖点", "ending": "收尾"} for index in range(3)]
+        self.project["directions"].extend(directions)
+        self.project["tasks"].append({"id": "directions-task", "kind": "directions", "provider": "DeepSeek", "status": "待审核",
+                                      "result": {"direction_ids": [item["id"] for item in directions]}, "estimate": None, "actual": None})
+        offer = jev.quote(self.project)
+        response = {"model": "jev-1.13.0", "answers": {"direction": {"type": "choice", "choice": "d1", "confidence": 0.8,
+                    "probabilities": {"d0": 0.1, "d1": 0.8, "d2": 0.1}}}, "usage": {"input_tokens": 120, "output_tokens": 3}}
+        seen = []
+
+        def fake_transport(request, timeout):
+            seen.append((json.loads(request.data), timeout))
+            return io.BytesIO(json.dumps(response).encode())
+
+        with patch.object(jev, "provider_key", return_value="local-test-key"):
+            task = jev.run(self.store, self.project, {"approved_fingerprint": offer["fingerprint"], "request_id": "jev-request-123"}, fake_transport)
+        self.assertEqual(task["status"], "完成")
+        self.assertIsNone(self.project["direction_approval"])
+        self.assertEqual(seen[0][0]["questions"]["direction"]["type"], "choice")
+        observation = self.project["jev_observations"][0]
+        self.assertEqual(observation["choice_id"], "direction-1")
+        self.assertEqual(observation["probabilities"]["direction-1"], 0.8)
+        self.assertIsNone(next(cost for cost in self.project["costs"] if cost["task_id"] == task["id"])["actual"])
+        self.store.approve_direction(self.project, "direction-0")
+        self.assertFalse(observation["comparisons"][-1]["agrees"])
 
     def test_supplier_bill_reconciliation_preserves_original_units_and_corrections(self):
         task = {"id": "cost-task", "kind": "preview", "provider": "SeeAny", "status": "失败",

@@ -64,6 +64,7 @@ class Store:
                    "gallery_versions": [], "gallery_approval": None, "gallery_choices": {}, "gallery_reviews": [],
                    "prompt_versions": [], "prompt_adoption": None, "prompt_reviews": [],
                    "image_observations": [],
+                   "jev_observations": [],
                    "video_approval": None, "shot_approvals": {}, "deliverables": [], "video_edits": [],
                    "nodes": [], "edges": [], "tasks": [], "costs": [], "cost_target": None, "chat": []}
         self.save(project)
@@ -127,6 +128,7 @@ class Store:
             project.setdefault("video_edits", [])
             project.setdefault("costs", [])
             project.setdefault("cost_target", None)
+            project.setdefault("jev_observations", [])
             return project
         except FileNotFoundError as exc:
             raise ValueError("项目不存在") from exc
@@ -141,7 +143,7 @@ class Store:
                 if entry is None:
                     entry = {"id": ident(), "task_id": task["id"], "provider": task["provider"],
                              "stage": task.get("kind") or "canvas", "node_id": task.get("node_id"),
-                             "purpose": "草稿" if task.get("kind") in ("preview", "chat", "gallery_plan", "facts", "directions", "prompt_change", "prompt_preview", "image_observation") else "正式",
+                             "purpose": "草稿" if task.get("kind") in ("preview", "chat", "gallery_plan", "facts", "directions", "prompt_change", "prompt_preview", "image_observation", "jev_direction") else "正式",
                              "model": task.get("model"), "estimate": task.get("estimate"), "actual": None,
                              "currency": task.get("currency"), "pricing_source": task.get("pricing_source") or "未核实",
                              "submitted_at": task.get("created") or stamp(), "settled_at": None,
@@ -406,6 +408,9 @@ class Store:
         if not direction or direction["brief_id"] != project["brief_versions"][-1]["id"] or direction["master_id"] != project["master_versions"][-1]["id"]:
             raise ValueError("广告方向不存在或上游版本已变化")
         project["direction_approval"] = direction_id
+        for observation in project.get("jev_observations", []):
+            if direction_id in observation.get("direction_ids", []) and observation["brief_id"] == direction["brief_id"] and observation["master_id"] == direction["master_id"]:
+                observation.setdefault("comparisons", []).append({"direction_id": direction_id, "agrees": observation["choice_id"] == direction_id, "at": stamp()})
         self.save(project)
         return direction
 

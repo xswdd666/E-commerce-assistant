@@ -25,7 +25,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
     const [project, setProject] = useState<StudioProject | null>(null);
     const [legacyProjects, setLegacyProjects] = useState<Array<{ id: string; name: string; sources: number; facts: number }>>([]);
     const [legacyId, setLegacyId] = useState<string>();
-    const [health, setHealth] = useState<{ deepseek: boolean; seeany: boolean; flova: boolean } | null>(null);
+    const [health, setHealth] = useState<{ deepseek: boolean; seeany: boolean; flova: boolean; jev: boolean } | null>(null);
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
     const [field, setField] = useState("");
@@ -117,7 +117,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
         <Drawer title="广告电商工作台" open={open} onClose={onClose} width={460} styles={{ body: { overflowY: "auto" } }}>
             <Space direction="vertical" size="large" className="w-full">
                 {error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
-                {health ? <Space wrap><Tag color={health.deepseek ? "success" : "default"}>DeepSeek {health.deepseek ? "已配置" : "未配置"}</Tag><Tag color={health.seeany ? "success" : "default"}>SeeAny {health.seeany ? "已配置" : "未配置"}</Tag><Tag color={health.flova ? "success" : "default"}>Flova {health.flova ? "可用" : "未找到"}</Tag></Space> : null}
+                {health ? <Space wrap><Tag color={health.deepseek ? "success" : "default"}>DeepSeek {health.deepseek ? "已配置" : "未配置"}</Tag><Tag color={health.seeany ? "success" : "default"}>SeeAny {health.seeany ? "已配置" : "未配置"}</Tag><Tag color={health.flova ? "success" : "default"}>Flova {health.flova ? "可用" : "未找到"}</Tag><Tag color={health.jev ? "success" : "default"}>Jev {health.jev ? "已配置" : "未配置"}</Tag></Space> : null}
                 {!project ? (
                     <section>
                         <Typography.Paragraph>此画布尚未关联本地商品项目。原始资料将保存在本机，不进入浏览器画布备份。</Typography.Paragraph>

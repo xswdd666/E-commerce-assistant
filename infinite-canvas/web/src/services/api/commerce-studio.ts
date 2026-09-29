@@ -7,6 +7,7 @@ export type ImageObservation = { id: string; task_id: string; original_id: strin
 export type GalleryItem = { id: string; kind: string; prompt: string; ratio: string; title: string; subtitle: string; x: number; y: number };
 export type GalleryPlan = { id: string; parent_id: string | null; brief_id: string; master_id: string; origin: string; items: GalleryItem[]; created: string };
 export type StudioCost = { id: string; task_id: string; provider: string; stage: string; node_id: string | null; purpose: string; model: string | null; estimate: number | null; actual: number | null; currency: string | null; pricing_source: string; status: string; submitted_at: string; settled_at: string | null; receipt_source?: string; settlement_method?: string; revisions?: Array<{ actual: number | null; currency: string | null; receipt_source?: string }> };
+export type JevObservation = { id: string; task_id: string; brief_id: string; master_id: string; direction_ids: string[]; choice_id: string; confidence: number; probabilities: Record<string, number>; model: string; usage?: { input_tokens: number; output_tokens: number }; comparisons: Array<{ direction_id: string; agrees: boolean; at: string }>; created: string };
 export type PromptFields = { product: string; scene: string; composition: string; lighting: string; negative: string; ratio: string };
 export type PromptVersion = { id: string; parent_id: string | null; brief_id: string; master_id: string; fields: PromptFields; text: string; origin: string; changed_fields: string[]; created: string };
 export type StudioProject = {
@@ -16,6 +17,7 @@ export type StudioProject = {
     sources: StudioSource[];
     facts: StudioFact[];
     image_observations: ImageObservation[];
+    jev_observations: JevObservation[];
     brief_versions: Array<{ id: string; facts: StudioFact[] }>;
     master_versions: Array<{ id: string; asset_ids: string[]; inferred_details: Array<InferredDetail | string> }>;
     directions: Array<{ id: string; brief_id: string; master_id: string; title: string; audience: string; opening: string; selling_point: string; ending: string }>;
@@ -58,7 +60,7 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
 }
 
 export const studioApi = {
-    health: () => request<{ ok: boolean; deepseek: boolean; seeany: boolean; flova: boolean }>("/health"),
+    health: () => request<{ ok: boolean; deepseek: boolean; seeany: boolean; flova: boolean; jev: boolean }>("/health"),
     legacyProjects: () => request<Array<{ id: string; name: string; sources: number; facts: number }>>("/legacy/projects"),
     legacyImport: (id: string) => request<StudioProject>("/legacy/import", { id }),
     search: (query: string) => request<Array<{ project_id: string; project_name: string; kind: string; text: string; updated: string }>>(`/search?q=${encodeURIComponent(query)}`),
@@ -92,6 +94,8 @@ export const studioApi = {
     sourceData: (id: string, sourceId: string) => request<{ name: string; mime: string; data_url: string }>(`/projects/${id}/sources/${sourceId}`),
     directionsQuote: (id: string) => request<StudioQuote>(`/projects/${id}/directions/quote`, {}),
     directionsRun: (id: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/directions/run`, { approved_fingerprint, request_id }),
+    jevDirectionsQuote: (id: string) => request<StudioQuote>(`/projects/${id}/jev/directions/quote`, {}),
+    jevDirectionsRun: (id: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/jev/directions/run`, { approved_fingerprint, request_id }),
     approveDirection: (id: string, direction_id: string) => request(`/projects/${id}/directions/approve`, { direction_id }),
     script: (id: string, text: string) => request(`/projects/${id}/scripts`, { text }),
     approveScript: (id: string, script_id: string) => request(`/projects/${id}/scripts/approve`, { script_id }),

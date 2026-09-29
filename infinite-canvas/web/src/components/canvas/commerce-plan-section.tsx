@@ -8,6 +8,7 @@ type Props = { project: StudioProject; busy: boolean; act: (operation: () => Pro
 
 export function CommercePlanSection({ project, busy, act }: Props) {
     const [offer, setOffer] = useState<StudioQuote | null>(null);
+    const [jevOffer, setJevOffer] = useState<StudioQuote | null>(null);
     const [script, setScript] = useState("");
     const [shots, setShots] = useState<ShotDraft[]>([{ visual: "", duration: 5, reference_asset_id: "", caption: "", detail_ids: [] }]);
     const master = project.master_versions.at(-1);
@@ -34,6 +35,13 @@ export function CommercePlanSection({ project, busy, act }: Props) {
             <Typography.Paragraph className="mb-1">目标用户：{direction.audience}<br />开头：{direction.opening}<br />卖点：{direction.selling_point}<br />结尾：{direction.ending}</Typography.Paragraph>
             <Button type="link" disabled={busy || project.direction_approval === direction.id} onClick={() => void act(() => studioApi.approveDirection(project.id, direction.id))}>选为广告主线</Button>
         </div>)}
+        {project.directions.length >= 3 ? <div className="mt-4 border-t pt-3">
+            <Typography.Text strong>Jev 旁路判断</Typography.Text>
+            <Typography.Paragraph type="secondary">Jev 只比较三个广告方向，不批准方向或后续生成。每次提交由你确认，结果与实际选择分别留痕。</Typography.Paragraph>
+            <Button disabled={busy} onClick={() => void act(async () => { setJevOffer(await studioApi.jevDirectionsQuote(project.id)); })}>查看 Jev 输入与费用</Button>
+            {jevOffer ? <div className="mt-2"><Typography.Paragraph>已确认简报与三个广告方向 · 模型 jev-latest · 费用：未知；{jevOffer.pricing_source}</Typography.Paragraph><Button type="primary" disabled={busy} onClick={() => void act(async () => { await studioApi.jevDirectionsRun(project.id, jevOffer.fingerprint, crypto.randomUUID()); setJevOffer(null); })}>确认提交 Jev 旁路判断</Button></div> : null}
+            {project.jev_observations.map((observation) => <div key={observation.id} className="mt-2 border-t pt-2"><Typography.Paragraph className="mb-1">Jev 选择：{project.directions.find((direction) => direction.id === observation.choice_id)?.title || observation.choice_id}；置信度 {(observation.confidence * 100).toFixed(1)}%；模型 {observation.model}</Typography.Paragraph>{observation.direction_ids.map((id) => <Tag key={id}>{project.directions.find((direction) => direction.id === id)?.title || id}：{((observation.probabilities[id] || 0) * 100).toFixed(1)}%</Tag>)}<Typography.Paragraph className="mt-1" type="secondary">{observation.comparisons.length ? observation.comparisons.map((comparison) => `${project.directions.find((direction) => direction.id === comparison.direction_id)?.title || comparison.direction_id}：${comparison.agrees ? "与 Jev 一致" : "与 Jev 不同"}`).join("；") : "等待人工选择广告方向"}</Typography.Paragraph></div>)}
+        </div> : null}
 
         {project.direction_approval ? <div className="mt-4">
             <Typography.Text strong>脚本</Typography.Text>

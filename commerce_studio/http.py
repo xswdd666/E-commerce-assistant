@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from .core import Store
-from . import backup, delivery, finishing, flova_flow, gallery, legacy, observations, prompts, service, video_export
+from . import backup, delivery, finishing, flova_flow, gallery, jev, legacy, observations, prompts, service, video_export
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -72,7 +72,8 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("接口不存在")
         if method == "GET" and parts == ["api", "health"]:
             return {"ok": True, "deepseek": bool(service.provider_key("DEEPSEEK_API_KEY")),
-                    "seeany": bool(service.provider_key("SEEANY_API_KEY")), "flova": service.flova.executable() is not None}
+                    "seeany": bool(service.provider_key("SEEANY_API_KEY")), "flova": service.flova.executable() is not None,
+                    "jev": bool(service.provider_key("TYPESAFE_API_KEY"))}
         if method == "GET" and parts == ["api", "projects"]:
             return STORE.list()
         if method == "GET" and parts == ["api", "search"]:
@@ -188,6 +189,10 @@ class Handler(BaseHTTPRequestHandler):
                     return STORE.set_cost_target(project, body.get("amount"), body.get("currency"))
                 if len(parts) == 6 and parts[3] == "tasks" and parts[5] == "resolve-unidentified":
                     return STORE.resolve_unidentified_task(project, parts[4], body.get("note"))
+                if parts[3:] == ["jev", "directions", "quote"]:
+                    return jev.quote(project)
+                if parts[3:] == ["jev", "directions", "run"]:
+                    return jev.run(STORE, project, body)
                 if parts[3:] == ["gallery", "default"]:
                     return gallery.default_plan(STORE, project)
                 if parts[3:] == ["gallery", "plans"]:
