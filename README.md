@@ -1,5 +1,7 @@
 # 广告电商创作工作台
 
+新规格的 infinite-canvas 版本开发位于 [`infinite-canvas/`](infinite-canvas/)，启动与当前能力见 [`commerce_studio/README.md`](commerce_studio/README.md)。原有 Python 网页项目保留在 `app/web/`，本页以下为该原型的说明。
+
 Windows 本地单人版。克隆仓库后将 `.env.example` 复制为 `.env` 并填写自己的密钥，再双击 `启动工作台.bat`；浏览器将打开 `http://127.0.0.1:8765`。需要 Python 3.11+、Pillow 和 FFmpeg；当前开发机已具备这些依赖。无需安装 npm 依赖。
 
 项目状态存于 `data/workbench.sqlite3`，原始文件存于 `data/files`。`data` 不应同步至公共仓库。完整备份可从交付页下载并恢复。DeepSeek 与 SeeAny 密钥从项目根目录 `.env` 读取，也兼容本机 `data/provider-settings.json`；密钥不包含在项目备份中，也不会从设置接口回显。

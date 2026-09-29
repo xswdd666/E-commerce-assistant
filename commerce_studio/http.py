@@ -1,0 +1,130 @@
+"""Loopback JSON API for the future infinite-canvas extension."""
+
+from __future__ import annotations
+
+import json
+import base64
+import os
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import urlparse
+
+from .core import Store
+from . import service
+
+
+ROOT = Path(__file__).resolve().parent.parent
+STORE = Store(ROOT / "data" / "commerce-studio")
+MAX_BODY = 35 * 1024 * 1024
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        # Request bodies, prompts, provider errors and keys must never enter logs.
+        pass
+
+    def _send(self, code, value):
+        raw = json.dumps(value, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-store")
+        origin = self.headers.get("Origin", "")
+        if origin in ("http://127.0.0.1:3000", "http://localhost:3000", "http://127.0.0.1:5173", "http://localhost:5173"):
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        origin = self.headers.get("Origin", "")
+        if origin in ("http://127.0.0.1:3000", "http://localhost:3000", "http://127.0.0.1:5173", "http://localhost:5173"):
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
+    def _body(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        if length < 0 or length > MAX_BODY:
+            raise ValueError("请求体过大")
+        return json.loads(self.rfile.read(length)) if length else {}
+
+    def _route(self, method):
+        parts = [part for part in urlparse(self.path).path.split("/") if part]
+        if parts[:1] != ["api"]:
+            raise ValueError("接口不存在")
+        if method == "GET" and parts == ["api", "health"]:
+            return {"ok": True, "deepseek": bool(service.provider_key("DEEPSEEK_API_KEY")),
+                    "seeany": bool(service.provider_key("SEEANY_API_KEY")), "flova": service.flova.executable() is not None}
+        if method == "GET" and parts == ["api", "projects"]:
+            return STORE.list()
+        if method == "POST" and parts == ["api", "projects"]:
+            return STORE.create(self._body().get("name"))
+        if len(parts) < 3 or parts[:2] != ["api", "projects"]:
+            raise ValueError("接口不存在")
+        project = STORE.load(parts[2])
+        if method == "GET" and len(parts) == 3:
+            return project
+        if method == "GET" and len(parts) == 5 and parts[3] == "sources":
+            source, raw = STORE.source_bytes(project, parts[4])
+            return {"name": source["name"], "mime": source["mime"], "data_url": f"data:{source['mime']};base64," + base64.b64encode(raw).decode()}
+        if method == "POST":
+            body = self._body()
+            with STORE.lock:
+                project = STORE.load(parts[2])
+                if parts[3:] == ["sources"]:
+                    return STORE.add_source(project, body.get("name"), body.get("mime"), body.get("base64"))
+                if parts[3:] == ["facts"]:
+                    return STORE.add_fact(project, body.get("field"), body.get("value"), body.get("source_id"), body.get("status", "待核实"))
+                if parts[3:] == ["briefs", "confirm"]:
+                    return STORE.confirm_brief(project, body.get("fact_ids", []))
+                if parts[3:] == ["masters", "confirm"]:
+                    return STORE.confirm_master(project, body.get("asset_ids", []), body.get("inferred_details"))
+                if parts[3:] == ["master-candidates", "quote"]:
+                    return service.master_quote(STORE, project, body)
+                if parts[3:] == ["master-candidates", "run"]:
+                    return service.run_master(STORE, project, body)
+                if parts[3:] == ["chat", "quote"]:
+                    return service.chat_quote(project, body)
+                if parts[3:] == ["chat", "run"]:
+                    return service.run_chat(STORE, project, body)
+                if parts[3:] == ["preview", "quote"]:
+                    return service.preview_quote(project, body)
+                if parts[3:] == ["preview", "run"]:
+                    return service.run_preview(STORE, project, body)
+                if parts[3:] == ["nodes"]:
+                    return STORE.add_node(project, body.get("kind"), body.get("data"))
+                if parts[3:] == ["edges"]:
+                    return STORE.connect(project, body.get("source"), body.get("target"), body.get("port"))
+                if len(parts) == 6 and parts[3] == "tasks" and parts[5] == "run":
+                    return service.run(STORE, project, parts[4], body)
+                if len(parts) == 6 and parts[3] == "tasks" and parts[5] == "sync":
+                    return service.sync(STORE, project, parts[4])
+        if method == "GET" and len(parts) == 6 and parts[3] == "tasks" and parts[5] == "quote":
+            return service.quote(STORE, project, parts[4])
+        raise ValueError("接口不存在")
+
+    def do_GET(self):
+        try:
+            self._send(200, self._route("GET"))
+        except ValueError as exc:
+            self._send(400, {"error": str(exc)})
+
+    def do_POST(self):
+        try:
+            self._send(200, self._route("POST"))
+        except (ValueError, json.JSONDecodeError) as exc:
+            self._send(400, {"error": str(exc)})
+
+
+def main():
+    port = int(os.environ.get("COMMERCE_STUDIO_PORT", "8766"))
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    print(f"Commerce Studio bridge: http://127.0.0.1:{port}")
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
