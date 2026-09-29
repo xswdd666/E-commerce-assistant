@@ -28,7 +28,8 @@ export type StudioProject = {
     prompt_adoption: { version_id: string; source_id: string; review_id: string } | null;
     prompt_reviews: Array<{ id: string; version_id: string; source_id: string; decision: string; reason: string }>;
     video_approval: { task_id: string; stream_chat_id: string; approved_at: string } | null;
-    deliverables: Array<{ id: string; kind: string; task_id: string; name: string; bytes: number; sha256: string }>;
+    deliverables: Array<{ id: string; kind: string; task_id?: string; edit_id?: string; name: string; bytes: number; sha256: string }>;
+    video_edits: Array<{ id: string; parent_id: string | null; clips: Array<{ id: string; source_id: string; start: number; end: number; speed: number; caption: string; preview_duration: number }>; preview_duration: number }>;
     costs: StudioCost[];
     external: { flova_project_id: string; flova_project_url: string };
     tasks: Array<{ id: string; provider: string; kind?: string; status: string; estimate: number | null; actual: number | null; candidate_group?: number; view_label?: string; asset_ids?: string[]; source_id?: string; input_snapshot?: { item?: { id: string }; version_id?: string }; error?: string; pending_actions?: Array<{ type?: string; message?: string; blocking?: boolean }> }>;
@@ -100,6 +101,9 @@ export const studioApi = {
         }
         return response.blob();
     },
+    videoProbe: (id: string, source_id: string) => request<{ duration: number; audio: boolean }>(`/projects/${id}/finishing/probe`, { source_id }),
+    videoEditSave: (id: string, clips: Array<{ source_id: string; start: number; end: number; speed: number; caption: string }>, parent_id: string | null) => request(`/projects/${id}/finishing/edits`, { clips, parent_id }),
+    videoEditRender: (id: string, edit_id: string) => request(`/projects/${id}/finishing/render`, { edit_id }),
     galleryDefault: (id: string) => request<GalleryPlan>(`/projects/${id}/gallery/default`, {}),
     gallerySave: (id: string, items: Array<Omit<GalleryItem, "id"> | GalleryItem>, parent_id: string | null) => request<GalleryPlan>(`/projects/${id}/gallery/plans`, { items, parent_id }),
     galleryApprove: (id: string, plan_id: string) => request<GalleryPlan>(`/projects/${id}/gallery/plans/approve`, { plan_id }),

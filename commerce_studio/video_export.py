@@ -174,7 +174,7 @@ def recover(store, project, task_id):
 
 def deliverable_bytes(store, project, deliverable_id):
     item = next((d for d in project.get("deliverables", []) if d["id"] == deliverable_id), None)
-    if not item or item.get("kind") != "video":
+    if not item or item.get("kind") not in ("video", "finished_video"):
         raise ValueError("本地成片不存在")
     raw = (store.root / "deliverables" / project["id"] / f"{deliverable_id}.mp4").read_bytes()
     if hashlib.sha256(raw).hexdigest() != item["sha256"]:

@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .core import Store
-from . import backup, flova_flow, gallery, prompts, service, video_export
+from . import backup, finishing, flova_flow, gallery, prompts, service, video_export
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -149,6 +149,12 @@ class Handler(BaseHTTPRequestHandler):
                     return video_export.run(STORE, project, body)
                 if len(parts) == 7 and parts[3:5] == ["flova", "export"] and parts[6] == "recover":
                     return video_export.recover(STORE, project, parts[5])
+                if parts[3:] == ["finishing", "probe"]:
+                    return finishing.probe(STORE, project, body.get("source_id"))
+                if parts[3:] == ["finishing", "edits"]:
+                    return finishing.save_edit(STORE, project, body.get("clips"), body.get("parent_id"))
+                if parts[3:] == ["finishing", "render"]:
+                    return finishing.render(STORE, project, body.get("edit_id"))
                 if parts[3:] == ["gallery", "default"]:
                     return gallery.default_plan(STORE, project)
                 if parts[3:] == ["gallery", "plans"]:

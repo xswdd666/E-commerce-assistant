@@ -1,6 +1,9 @@
 import base64
 import io
+import hashlib
 import json
+import shutil
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -14,7 +17,7 @@ from PIL import Image
 
 from commerce_studio.core import Store
 from commerce_studio import service
-from commerce_studio import backup, flova_flow, gallery, http as bridge, prompts, video_export
+from commerce_studio import backup, finishing, flova_flow, gallery, http as bridge, prompts, video_export
 
 
 class CommerceStudioTests(unittest.TestCase):
@@ -224,6 +227,32 @@ class CommerceStudioTests(unittest.TestCase):
         imported = backup.restore_project(self.store, archive)
         self.assertEqual(video_export.deliverable_bytes(self.store, imported, imported["deliverables"][0]["id"]), b"valid nonempty mp4 bytes")
         video_export.ACTIVE.discard(self.project["id"])
+
+    def test_local_finishing_trims_speeds_and_preserves_original(self):
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg or not shutil.which("ffprobe"):
+            self.skipTest("FFmpeg unavailable")
+        source_id = "a" * 32
+        folder = self.store.root / "deliverables" / self.project["id"]
+        folder.mkdir(parents=True)
+        original = folder / f"{source_id}.mp4"
+        result = subprocess.run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=blue:s=320x480:d=2:r=30",
+                                 "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:v", "libx264", "-c:a", "aac", "-shortest", str(original)],
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        original_hash = hashlib.sha256(original.read_bytes()).hexdigest()
+        self.project["deliverables"].append({"id": source_id, "kind": "video", "name": "original.mp4", "bytes": original.stat().st_size,
+                                            "sha256": original_hash, "created": "2026-09-29T00:00:00+00:00"})
+        edit = finishing.save_edit(self.store, self.project, [{"source_id": source_id, "start": 0.25, "end": 1.75,
+            "speed": 1.5, "caption": "商品展示"}])
+        self.assertAlmostEqual(edit["preview_duration"], 1, places=2)
+        output = finishing.render(self.store, self.project, edit["id"])
+        self.assertEqual(output["kind"], "finished_video")
+        self.assertGreater(output["bytes"], 0)
+        self.assertEqual(hashlib.sha256(original.read_bytes()).hexdigest(), original_hash)
+        self.assertAlmostEqual(finishing.probe(self.store, self.project, output["id"])["duration"], 1, delta=0.15)
+        with self.assertRaisesRegex(ValueError, "已导出"):
+            finishing.render(self.store, self.project, edit["id"])
 
     def test_video_is_not_submitted_without_verified_flova_reference_upload(self):
         source = self.approved_project()

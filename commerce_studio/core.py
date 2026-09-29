@@ -61,7 +61,7 @@ class Store:
                    "storyboard_versions": [], "storyboard_approval": None, "external": {"flova_project_id": "", "flova_project_url": ""},
                    "gallery_versions": [], "gallery_approval": None, "gallery_choices": {}, "gallery_reviews": [],
                    "prompt_versions": [], "prompt_adoption": None, "prompt_reviews": [],
-                   "video_approval": None, "deliverables": [],
+                   "video_approval": None, "deliverables": [], "video_edits": [],
                    "nodes": [], "edges": [], "tasks": [], "costs": [], "chat": []}
         self.save(project)
         return project
@@ -82,6 +82,7 @@ class Store:
             project.setdefault("prompt_reviews", [])
             project.setdefault("video_approval", None)
             project.setdefault("deliverables", [])
+            project.setdefault("video_edits", [])
             project.setdefault("costs", [])
             return project
         except FileNotFoundError as exc:
