@@ -113,6 +113,18 @@ class CommerceStudioTests(unittest.TestCase):
         version = self.store.confirm_brief(self.project, [fact["id"]])
         self.assertEqual(version["facts"][0]["value"], "白色")
 
+    def test_original_photo_facts_use_vision_and_stay_unconfirmed(self):
+        source = self.store.add_source(self.project, "front.png", "image/png", base64.b64encode(b"photo").decode())
+        offer = service.facts_quote(self.project, {"source_id": source["id"]})
+        response = {"id": "remote-image", "text": '{"facts":[{"field":"颜色","value":"白色"}]}', "usage": {}}
+        with patch.object(service, "provider_key", return_value="test-key"), patch.object(service, "deepseek_complete", return_value=response) as remote:
+            service.run_facts(self.store, self.project, {"source_id": source["id"], "approved_fingerprint": offer["fingerprint"], "request_id": "photo-facts-request"})
+        content = remote.call_args.args[1][1]["content"]
+        self.assertEqual(content[1]["type"], "image_url")
+        self.assertTrue(content[1]["image_url"]["url"].startswith("data:image/png;base64,"))
+        self.assertEqual(self.project["facts"][0]["status"], "待核实")
+        self.assertEqual(self.project["facts"][0]["source_id"], source["id"])
+
     def test_image_observation_is_reviewable_and_does_not_approve_facts(self):
         original = self.approved_project()
         candidate_id = self.project["master_versions"][-1]["asset_ids"][0]

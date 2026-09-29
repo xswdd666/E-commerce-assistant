@@ -91,9 +91,13 @@ def chat_quote(project, body):
 
 def facts_quote(project, body):
     source = next((s for s in project["sources"] if s["id"] == body.get("source_id")), None)
-    if not source or not source.get("extracted_text", "").strip():
-        raise ValueError("此来源没有可提取文本，请人工查看原文件")
-    snapshot = {"source_id": source["id"], "source_sha256": source["sha256"], "text": source["extracted_text"]}
+    image_mimes = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+    if source and source["mime"] in image_mimes and not source.get("origin"):
+        snapshot = {"source_id": source["id"], "source_sha256": source["sha256"], "mime": source["mime"], "kind": "image"}
+    elif source and source.get("extracted_text", "").strip():
+        snapshot = {"source_id": source["id"], "source_sha256": source["sha256"], "text": source["extracted_text"], "kind": "text"}
+    else:
+        raise ValueError("此来源没有可提取内容，请人工查看原文件")
     return {"provider": "DeepSeek", "input_snapshot": snapshot, "fingerprint": fingerprint(snapshot),
             "estimate": None, "currency": None, "pricing_source": "未核实，费用未知", "reliable": False,
             "requires_explicit_run": True}
@@ -172,8 +176,14 @@ def run_facts(store, project, body):
     project["tasks"].append(task)
     store.save(project)
     try:
-        messages = [{"role": "system", "content": "从商品资料提取可由原文支持的候选信息。只返回 JSON 对象：{\"facts\":[{\"field\":\"字段\",\"value\":\"内容\"}]}。不得把推断写成事实。"},
-                    {"role": "user", "content": snapshot["text"]}]
+        if snapshot["kind"] == "image":
+            source, raw = store.source_bytes(project, snapshot["source_id"])
+            content = [{"type": "text", "text": "从这张商品原始图片提取肉眼可见的候选事实；型号、参数和不可见结构若无文字证据不要猜测。"},
+                       {"type": "image_url", "image_url": {"url": f"data:{source['mime']};base64,{base64.b64encode(raw).decode('ascii')}", "detail": "original"}}]
+        else:
+            content = snapshot["text"]
+        messages = [{"role": "system", "content": "从商品资料提取有原始证据支持的候选信息。只返回 JSON 对象：{\"facts\":[{\"field\":\"字段\",\"value\":\"内容\"}]}。不得把推断写成事实。所有候选仍待用户核实。"},
+                    {"role": "user", "content": content}]
         result = deepseek_complete(key, messages, json_mode=True)
         parsed = json.loads(result["text"])
         items = parsed.get("facts")
