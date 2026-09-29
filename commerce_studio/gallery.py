@@ -46,7 +46,7 @@ def plan_quote(store, project, requirement=""):
                 "facts": [{"field": f["field"], "value": f["value"]} for f in brief["facts"]],
                 "references": [{"source_id": s["id"], "sha256": s["sha256"], "view": s["view_label"]} for s, _ in assets]}
     return {"provider": "SeeAny", "input_snapshot": snapshot, "fingerprint": fingerprint(snapshot),
-            "estimate": None, "currency": None, "pricing_source": "SeeAny 实时策划价格未核实", "reliable": False,
+            "estimate": 0.10, "currency": "CNY", "pricing_source": "SeeAny 官方开发文档：套图策划 ¥0.10/次；失败退回（2026-09-30 核对）", "reliable": True,
             "requires_explicit_run": True}
 
 
@@ -83,6 +83,7 @@ def run_plan(store, project, body):
         raise ValueError("缺少 SeeAny API Key")
     snapshot = offer["input_snapshot"]
     task = _task(project, "gallery_plan", snapshot, request_id)
+    task.update(estimate=offer["estimate"], currency=offer["currency"], pricing_source=offer["pricing_source"])
     store.save(project)
     try:
         urls = _upload_master(store, project, snapshot["master_id"], key)

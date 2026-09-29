@@ -1,6 +1,7 @@
 """One-click local launcher for the forked canvas and companion API."""
 
 import subprocess
+import os
 import threading
 import time
 import webbrowser
@@ -16,7 +17,14 @@ ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "infinite-canvas" / "web"
 
 
+def clear_unusable_proxy():
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        if os.environ.get(name, "").rstrip("/") == "http://127.0.0.1:9":
+            os.environ.pop(name, None)
+
+
 def main():
+    clear_unusable_proxy()
     if not (WEB / "node_modules" / "vite").exists():
         raise SystemExit("请先在 infinite-canvas\\web 运行 npm install --legacy-peer-deps")
     server = ThreadingHTTPServer(("127.0.0.1", 8766), Handler)

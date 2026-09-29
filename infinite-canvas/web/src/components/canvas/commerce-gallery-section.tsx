@@ -53,7 +53,7 @@ export function CommerceGallerySection({ project, busy, act }: Props) {
             <Button disabled={busy || !project.master_versions.length} onClick={() => void act(async () => { setPlanOffer(await studioApi.galleryPlanQuote(project.id, requirement)); })}>查看 SeeAny 策划输入</Button>
         </Space>
         <Input.TextArea className="mt-2" rows={2} placeholder="套图策划补充要求" value={requirement} onChange={(event) => { setRequirement(event.target.value); setPlanOffer(null); }} />
-        {planOffer ? <div className="mt-2"><Typography.Text>已确认简报与母版、三张参考图；费用：{planOffer.estimate == null ? "未知" : planOffer.estimate}</Typography.Text><Button type="primary" className="ml-2" disabled={busy} onClick={() => void act(async () => { await studioApi.galleryPlanRun(project.id, requirement, planOffer.fingerprint, crypto.randomUUID()); setPlanOffer(null); })}>确认提交套图策划</Button></div> : null}
+        {planOffer ? <div className="mt-2"><Typography.Text>已确认简报与母版、三张参考图；预计费用：{planOffer.estimate == null ? "未知" : `${planOffer.estimate.toFixed(2)} ${planOffer.currency || "单位未知"}`}；{planOffer.pricing_source}</Typography.Text><Button type="primary" className="ml-2" disabled={busy} onClick={() => void act(async () => { await studioApi.galleryPlanRun(project.id, requirement, planOffer.fingerprint, crypto.randomUUID()); setPlanOffer(null); })}>确认提交套图策划</Button></div> : null}
         {project.tasks.filter((task) => task.kind === "gallery_plan").map((task) => <div key={task.id} className="mt-1"><Tag>{task.status}</Tag>SeeAny 套图策划</div>)}
         {latest ? <div className="mt-3">
             <Typography.Paragraph>最新方案：{latest.origin} · {latest.items.length} 张 {project.gallery_approval === latest.id ? <Tag color="success">已批准</Tag> : <Tag>待批准</Tag>}</Typography.Paragraph>

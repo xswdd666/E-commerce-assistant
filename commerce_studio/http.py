@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from .core import Store
-from . import backup, delivery, finishing, flova_flow, gallery, legacy, prompts, service, video_export
+from . import backup, delivery, finishing, flova_flow, gallery, legacy, observations, prompts, service, video_export
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -120,6 +120,12 @@ class Handler(BaseHTTPRequestHandler):
                     return service.facts_quote(project, body)
                 if parts[3:] == ["facts", "run"]:
                     return service.run_facts(STORE, project, body)
+                if parts[3:] == ["observations", "quote"]:
+                    return observations.quote(STORE, project, body.get("original_id"), body.get("candidate_id"))
+                if parts[3:] == ["observations", "run"]:
+                    return observations.run(STORE, project, body)
+                if len(parts) == 6 and parts[3] == "observations" and parts[5] == "correct":
+                    return observations.correct(STORE, project, parts[4], body.get("field"), body.get("text"))
                 if parts[3:] == ["preview", "quote"]:
                     return service.preview_quote(project, body)
                 if parts[3:] == ["preview", "run"]:

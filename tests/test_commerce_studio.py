@@ -2,6 +2,7 @@ import base64
 import io
 import hashlib
 import json
+import os
 import shutil
 import sqlite3
 from contextlib import closing
@@ -19,7 +20,7 @@ from PIL import Image
 
 from commerce_studio.core import Store
 from commerce_studio import service
-from commerce_studio import backup, delivery, finishing, flova_flow, gallery, http as bridge, legacy, prompts, video_export
+from commerce_studio import backup, delivery, finishing, flova_flow, gallery, http as bridge, launcher, legacy, observations, prompts, video_export
 
 
 class CommerceStudioTests(unittest.TestCase):
@@ -111,6 +112,27 @@ class CommerceStudioTests(unittest.TestCase):
         self.store.review_fact(self.project, fact["id"], "已知事实")
         version = self.store.confirm_brief(self.project, [fact["id"]])
         self.assertEqual(version["facts"][0]["value"], "白色")
+
+    def test_image_observation_is_reviewable_and_does_not_approve_facts(self):
+        original = self.approved_project()
+        candidate_id = self.project["master_versions"][-1]["asset_ids"][0]
+        offer = observations.quote(self.store, self.project, original["id"], candidate_id)
+        self.assertIsNone(offer["estimate"])
+        response = {"id": "deepseek-observation", "text": json.dumps({"observations": {field: "需人工核对" for field in observations.FIELDS}}, ensure_ascii=False), "usage": {}}
+        with patch.object(observations, "provider_key", return_value="test-key"), patch.object(observations, "deepseek_complete", return_value=response) as call:
+            task = observations.run(self.store, self.project, {"original_id": original["id"], "candidate_id": candidate_id,
+                 "approved_fingerprint": offer["fingerprint"], "request_id": "observation-request-123"})
+        self.assertEqual(task["status"], "待审核")
+        self.assertEqual(next(c for c in self.project["costs"] if c["task_id"] == task["id"])["purpose"], "草稿")
+        blocks = call.call_args.args[1][1]["content"]
+        self.assertEqual([block["type"] for block in blocks], ["text", "image_url", "image_url"])
+        item = self.project["image_observations"][0]
+        observations.correct(self.store, self.project, item["id"], "颜色", "候选图颜色偏蓝")
+        self.assertEqual(item["corrections"][0]["text"], "候选图颜色偏蓝")
+        self.assertEqual(len(self.project["facts"]), 1)
+        self.assertEqual(observations.run(self.store, self.project, {"request_id": "observation-request-123"})["id"], task["id"])
+        with self.assertRaisesRegex(ValueError, "原始实拍"):
+            observations.quote(self.store, self.project, candidate_id, original["id"])
 
     def test_raw_photo_cannot_be_approved_as_complete_master(self):
         source = self.store.add_source(self.project, "front.png", "image/png", base64.b64encode(b"photo").decode())
@@ -390,16 +412,25 @@ class CommerceStudioTests(unittest.TestCase):
         self.approved_project()
         self.store.add_fact(self.project, "虚构容量", "99 升", status="待核实")
         offer = gallery.plan_quote(self.store, self.project, "白底为主")
+        self.assertEqual((offer["estimate"], offer["currency"]), (0.10, "CNY"))
         self.assertNotIn("99 升", str(offer["input_snapshot"]))
         returned = {"items": [{"cateName": "主图", "prompt": "白底产品主图", "imgRatio": "1:1"}]}
         with patch.object(gallery, "provider_key", return_value="test-key"), patch.object(gallery.seeany, "upload_image", return_value="https://seeany.com/upload"), patch.object(gallery.seeany, "submit", return_value=returned) as submit:
             task = gallery.run_plan(self.store, self.project, {"requirement": "白底为主", "approved_fingerprint": offer["fingerprint"], "request_id": "plan-request-123"})
         self.assertEqual(task["status"], "待审核")
+        self.assertEqual((task["estimate"], task["currency"]), (0.10, "CNY"))
         self.assertNotIn("99 升", submit.call_args.args[2]["sellingPoints"])
         self.assertEqual(self.project["gallery_versions"][-1]["origin"], "SeeAny")
         self.project["tasks"].append({"kind": "gallery_plan", "status": "待核对"})
         with self.assertRaisesRegex(ValueError, "尚未核对"):
             gallery.plan_quote(self.store, self.project)
+
+    def test_launcher_only_clears_known_unusable_proxy(self):
+        with patch.dict(os.environ, {"HTTP_PROXY": "http://127.0.0.1:9", "HTTPS_PROXY": "http://127.0.0.1:9/", "ALL_PROXY": "http://proxy.example:8080"}):
+            launcher.clear_unusable_proxy()
+            self.assertNotIn("HTTP_PROXY", os.environ)
+            self.assertNotIn("HTTPS_PROXY", os.environ)
+            self.assertEqual(os.environ["ALL_PROXY"], "http://proxy.example:8080")
 
     def test_cost_ledger_keeps_unknown_separate_from_confirmed_actual(self):
         task = {"id": "billable-task", "kind": "gallery_image", "provider": "SeeAny", "status": "远端运行中",

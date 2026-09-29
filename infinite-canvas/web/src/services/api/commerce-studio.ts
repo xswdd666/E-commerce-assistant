@@ -2,6 +2,7 @@ const BASE = "http://127.0.0.1:8766/api";
 
 export type StudioSource = { id: string; name: string; mime: string; bytes: number; parse_status?: string; origin?: string; candidate_group?: number; view_label?: string; reference_ids?: string[]; gallery_plan_id?: string; gallery_item_id?: string; prompt_version_id?: string };
 export type StudioFact = { id: string; field: string; value: string; source_id?: string; status: "待核实" | "已知事实" | "创意假设" };
+export type ImageObservation = { id: string; task_id: string; original_id: string; candidate_id: string; brief_id: string; fields: Record<string, string>; corrections: Array<{ id: string; field: string; text: string; at: string }>; created: string };
 export type GalleryItem = { id: string; kind: string; prompt: string; ratio: string; title: string; subtitle: string; x: number; y: number };
 export type GalleryPlan = { id: string; parent_id: string | null; brief_id: string; master_id: string; origin: string; items: GalleryItem[]; created: string };
 export type StudioCost = { id: string; task_id: string; provider: string; stage: string; node_id: string | null; purpose: string; model: string | null; estimate: number | null; actual: number | null; currency: string | null; pricing_source: string; status: string; receipt_source?: string; settlement_method?: string; revisions?: Array<{ actual: number | null; currency: string | null; receipt_source?: string }> };
@@ -13,6 +14,7 @@ export type StudioProject = {
     legacy_import?: { id: string; imported_at: string; review_required: string; archive: unknown };
     sources: StudioSource[];
     facts: StudioFact[];
+    image_observations: ImageObservation[];
     brief_versions: Array<{ id: string; facts: StudioFact[] }>;
     master_versions: Array<{ id: string; asset_ids: string[]; inferred_details: string[] }>;
     directions: Array<{ id: string; brief_id: string; master_id: string; title: string; audience: string; opening: string; selling_point: string; ending: string }>;
@@ -38,7 +40,7 @@ export type StudioProject = {
 };
 
 export type MasterRequest = { group: number; view_label: string; views: string; source_id: string };
-export type StudioQuote = { fingerprint: string; estimate: number | null; pricing_source: string; input_snapshot: unknown };
+export type StudioQuote = { fingerprint: string; estimate: number | null; currency?: string | null; pricing_source: string; input_snapshot: unknown };
 export type PreviewRequest = { canvas_project_id: string; config_node_id: string; reference_node_id: string; connection_ids: string[]; prompt: string; ratio: string; reference_data_url: string };
 
 async function request<T>(path: string, body?: unknown): Promise<T> {
@@ -71,6 +73,9 @@ export const studioApi = {
     reviewFact: (id: string, factId: string, status: StudioFact["status"]) => request<StudioFact>(`/projects/${id}/facts/${factId}/review`, { status }),
     factsQuote: (id: string, sourceId: string) => request<StudioQuote>(`/projects/${id}/facts/quote`, { source_id: sourceId }),
     factsRun: (id: string, sourceId: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/facts/run`, { source_id: sourceId, approved_fingerprint, request_id }),
+    observationQuote: (id: string, original_id: string, candidate_id: string) => request<StudioQuote>(`/projects/${id}/observations/quote`, { original_id, candidate_id }),
+    observationRun: (id: string, original_id: string, candidate_id: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/observations/run`, { original_id, candidate_id, approved_fingerprint, request_id }),
+    observationCorrect: (id: string, observationId: string, field: string, text: string) => request(`/projects/${id}/observations/${observationId}/correct`, { field, text }),
     brief: (id: string, fact_ids: string[]) => request(`/projects/${id}/briefs/confirm`, { fact_ids }),
     master: (id: string, asset_ids: string[]) => request(`/projects/${id}/masters/confirm`, { asset_ids, inferred_details: [] }),
     masterQuote: (id: string, body: MasterRequest) => request<StudioQuote>(`/projects/${id}/master-candidates/quote`, body),

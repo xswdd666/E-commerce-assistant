@@ -13,6 +13,7 @@ import { CommercePromptSection } from "@/components/canvas/commerce-prompt-secti
 import { CommerceFinishingSection } from "@/components/canvas/commerce-finishing-section";
 import { CommerceDeliverySection } from "@/components/canvas/commerce-delivery-section";
 import { CommerceCostSection } from "@/components/canvas/commerce-cost-section";
+import { CommerceObservationSection } from "@/components/canvas/commerce-observation-section";
 import { createCanvasExportBlob } from "@/lib/canvas/canvas-export";
 import { createZip } from "@/lib/zip";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
@@ -178,6 +179,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                             {project.master_versions.at(-1)?.asset_ids.map((id) => { const source = project.sources.find((item) => item.id === id); return source ? <div key={id}>{source.view_label} · {source.name} <Button type="link" disabled={busy} onClick={() => void (async () => { try { const asset = await studioApi.sourceData(project.id, id); await onInsertImage(asset.data_url, `母版${source.view_label}`); } catch (cause) { setError(cause instanceof Error ? cause.message : "加入画布失败"); } })()}>加入画布</Button></div> : null; })}
                             {comparison ? <div className="mt-3 grid grid-cols-2 gap-2"><div><Typography.Text>参考图</Typography.Text><img src={comparison.original} alt="参考图" className="w-full" /></div><div><Typography.Text>候选图</Typography.Text><img src={comparison.generated} alt="候选图" className="w-full" /></div></div> : null}
                         </section>
+                        <CommerceObservationSection project={project} busy={busy} act={act} />
                         <section>
                             <Typography.Title level={5}>创作聊天</Typography.Title>
                             <Typography.Paragraph type="secondary">DeepSeek 仅读取本次需求和最新已确认简报；讨论内容不会自动进入正式生成。</Typography.Paragraph>
