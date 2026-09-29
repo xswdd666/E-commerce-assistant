@@ -120,6 +120,14 @@ export const studioApi = {
         }
         return response.blob();
     },
+    deliveryBlob: async (id: string, videoId: string) => {
+        const response = await fetch(`${BASE}/projects/${id}/delivery/export/${videoId}`);
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || "交付包导出失败");
+        }
+        return response.blob();
+    },
     backupBlob: async (id: string) => {
         const response = await fetch(`${BASE}/projects/${id}/backup`);
         if (!response.ok) {

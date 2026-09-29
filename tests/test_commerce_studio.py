@@ -17,7 +17,7 @@ from PIL import Image
 
 from commerce_studio.core import Store
 from commerce_studio import service
-from commerce_studio import backup, finishing, flova_flow, gallery, http as bridge, prompts, video_export
+from commerce_studio import backup, delivery, finishing, flova_flow, gallery, http as bridge, prompts, video_export
 
 
 class CommerceStudioTests(unittest.TestCase):
@@ -253,6 +253,39 @@ class CommerceStudioTests(unittest.TestCase):
         self.assertAlmostEqual(finishing.probe(self.store, self.project, output["id"])["duration"], 1, delta=0.15)
         with self.assertRaisesRegex(ValueError, "已导出"):
             finishing.render(self.store, self.project, edit["id"])
+
+    def test_delivery_package_contains_video_gallery_and_provenance(self):
+        self.approved_project()
+        plan = gallery.default_plan(self.store, self.project)
+        gallery.approve_plan(self.store, self.project, plan["id"])
+        with self.assertRaisesRegex(ValueError, "请选择"):
+            delivery.export_delivery(self.store, self.project, "missing")
+        image = io.BytesIO()
+        Image.new("RGB", (64, 64), "white").save(image, format="PNG")
+        candidate = self.store.add_source(self.project, "generated.png", "image/png", base64.b64encode(image.getvalue()).decode())
+        candidate.update(origin="SeeAny gallery", gallery_plan_id=plan["id"])
+        for item in plan["items"]:
+            candidate["gallery_item_id"] = item["id"]
+            self.project["tasks"].append({"kind": "gallery_image", "input_snapshot": {"item": item, "plan_id": plan["id"]}, "asset_ids": [candidate["id"]]})
+            gallery.review_image(self.store, self.project, item["id"], candidate["id"], "采用")
+        self.project["directions"].append({"id": "direction-1", "brief_id": self.project["brief_versions"][-1]["id"], "master_id": self.project["master_versions"][-1]["id"]})
+        self.store.approve_direction(self.project, "direction-1")
+        script = self.store.add_script(self.project, "已确认广告脚本")
+        self.store.approve_script(self.project, script["id"])
+        board = self.store.add_storyboard(self.project, [{"visual": "展示产品", "duration": 3, "reference_asset_id": self.project["master_versions"][-1]["asset_ids"][0]}])
+        self.store.approve_storyboard(self.project, board["id"])
+        video_id = "b" * 32
+        folder = self.store.root / "deliverables" / self.project["id"]
+        folder.mkdir(parents=True)
+        (folder / f"{video_id}.mp4").write_bytes(b"video bytes")
+        self.project["deliverables"].append({"id": video_id, "kind": "video", "name": "flova.mp4", "sha256": hashlib.sha256(b"video bytes").hexdigest(), "bytes": 11})
+        with zipfile.ZipFile(io.BytesIO(delivery.export_delivery(self.store, self.project, video_id))) as archive:
+            names = archive.namelist()
+            self.assertIn("交付/商品详情页视频.mp4", names)
+            self.assertEqual(sum(name.endswith(".svg") for name in names), 6)
+            self.assertEqual(sum(name.endswith(".png") for name in names), 6)
+            self.assertEqual(archive.read("交付/已确认脚本.txt").decode(), "已确认广告脚本")
+            self.assertEqual(json.loads(archive.read("交付/交付清单.json"))["video_id"], video_id)
 
     def test_video_is_not_submitted_without_verified_flova_reference_upload(self):
         source = self.approved_project()

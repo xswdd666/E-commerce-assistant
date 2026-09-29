@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .core import Store
-from . import backup, finishing, flova_flow, gallery, prompts, service, video_export
+from . import backup, delivery, finishing, flova_flow, gallery, prompts, service, video_export
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -209,6 +209,10 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) == 5 and parts[:2] == ["api", "projects"] and parts[3:] == ["gallery", "export"]:
                 project = STORE.load(parts[2])
                 self._send_archive(gallery.export_gallery(STORE, project), f"commerce-gallery-{project['id']}.zip")
+                return
+            if len(parts) == 6 and parts[:2] == ["api", "projects"] and parts[3:5] == ["delivery", "export"]:
+                project = STORE.load(parts[2])
+                self._send_archive(delivery.export_delivery(STORE, project, parts[5]), f"commerce-delivery-{project['id']}.zip")
                 return
             self._send(200, self._route("GET"))
         except ValueError as exc:

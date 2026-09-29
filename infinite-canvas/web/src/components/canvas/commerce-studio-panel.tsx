@@ -11,6 +11,7 @@ import { CommerceFlovaSection } from "@/components/canvas/commerce-flova-section
 import { CommerceGallerySection } from "@/components/canvas/commerce-gallery-section";
 import { CommercePromptSection } from "@/components/canvas/commerce-prompt-section";
 import { CommerceFinishingSection } from "@/components/canvas/commerce-finishing-section";
+import { CommerceDeliverySection } from "@/components/canvas/commerce-delivery-section";
 import { createCanvasExportBlob } from "@/lib/canvas/canvas-export";
 import { createZip } from "@/lib/zip";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
@@ -179,6 +180,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                         <CommerceGallerySection project={project} busy={busy} act={act} />
                         <CommerceFlovaSection project={project} busy={busy} act={act} />
                         <CommerceFinishingSection project={project} busy={busy} act={act} />
+                        <CommerceDeliverySection project={project} busy={busy} act={act} />
                         <section>
                             <Typography.Title level={5}>画布输入</Typography.Title>
                             <Typography.Paragraph>{selected ? `当前节点：${selected.title || selected.type}` : "选择一个画布节点查看其输入依赖"}</Typography.Paragraph>
