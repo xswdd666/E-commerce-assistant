@@ -689,6 +689,27 @@ def ai_request(p, kind, body):
         system = "你是小家电广告策划。只返回 JSON 对象，格式：{\"directions\":[{\"title\":\"\",\"audience\":\"\",\"opening\":\"\",\"selling_point\":\"\",\"ending\":\"\"}]}。提供恰好三个不同方向，卖点只依据已确认事实，不杜撰规格。"
         user = "已确认产品事实：" + json.dumps([{"field": f["field"], "value": f["value"]} for f in latest_brief["facts"]], ensure_ascii=False)
         json_mode = True
+    elif kind == "script":
+        direction = next((d for d in p["directions"] if d["id"] == p["direction_approval"]), None)
+        if not latest_brief or not p["master_approval"] or not direction:
+            raise ValueError("请先确认简报、批准母版并选择广告主线")
+        system = '你是电商短视频脚本策划。只返回 JSON 对象，格式：{"script":"完整脚本文案"}。目标约15秒，竖屏9:16，静音也能理解；按开头、卖点展示、结尾组织。只使用已确认事实，不杜撰产品规格、功效或优惠。'
+        user = "已确认事实：" + json.dumps([{"field": f["field"], "value": f["value"]} for f in latest_brief["facts"]], ensure_ascii=False) + "\n已选广告主线：" + json.dumps({k: direction[k] for k in ("title", "audience", "opening", "selling_point", "ending")}, ensure_ascii=False)
+        json_mode = True
+    elif kind == "storyboard":
+        script = next((s for s in p["script_versions"] if s["id"] == p["script_approval"]), None)
+        if not latest_brief or not p["master_approval"] or not script:
+            raise ValueError("请先确认简报、批准母版和脚本")
+        system = '你是电商短视频分镜师。只返回 JSON 对象，格式：{"shots":[{"description":"画面描述","duration":3,"caption":"字幕"}]}。制作约15秒、竖屏9:16的完整分镜；每个镜头写清可拍摄的画面、秒数和静音可读字幕。只能依据已确认事实与已批准脚本，不新增产品细节或效果承诺。'
+        user = "已批准脚本：" + script["text"][:6000] + "\n已确认事实：" + json.dumps([{"field": f["field"], "value": f["value"]} for f in latest_brief["facts"]], ensure_ascii=False) + "\n已核实细节：" + json.dumps([d["description"] for d in p["details"] if d.get("verified")], ensure_ascii=False)
+        json_mode = True
+    elif kind == "prompt_generate":
+        if not latest_brief:
+            raise ValueError("请先确认产品简报")
+        system = '你是电商广告图片提示词策划。只返回 JSON 对象，格式：{"fields":{"identity":"产品身份与保持特征","scene":"场景","composition":"构图","lighting":"光线","style":"风格","ratio":"画幅","prohibited":"禁止变化项","purpose":"目标用途"}}。基于已确认事实生成可编辑的第一版提示词；不杜撰外观、规格、功效或优惠。缺少依据的视觉细节明确标为待确认，不得当作产品事实。默认画幅9:16。'
+        context = {"confirmed_facts": [{"field": f["field"], "value": f["value"]} for f in latest_brief["facts"]], "approved_storyboard": next((s["shots"] for s in p["storyboard_versions"] if s["id"] == p["storyboard_approval"]), None), "verified_details": [d["description"] for d in p["details"] if d.get("verified")]}
+        user = "创作依据：" + json.dumps(context, ensure_ascii=False)[:10000]
+        json_mode = True
     elif kind == "chat":
         if not latest_brief:
             raise ValueError("请先确认产品简报")
@@ -719,7 +740,7 @@ def ai_quote(p, kind, body):
     except (KeyError, ValueError, TypeError):
         raise ValueError("请先按当前官方价格设置 DeepSeek 每百万输入/输出 token 的人民币费用")
     messages, json_mode = ai_request(p, kind, body)
-    max_tokens = 1600
+    max_tokens = 2400 if kind in ("storyboard", "prompt_generate") else 1600
     # UTF-8 byte count plus message overhead is a conservative upper bound for text tokens.
     input_bound = sum(len(m["content"].encode("utf-8")) for m in messages) + 1000
     estimate = round(max(0.01, (input_bound * input_rate + max_tokens * output_rate) / 1_000_000), 2)
@@ -765,6 +786,40 @@ def run_ai(p, kind, body):
                 for d in directions:
                     execute(p, "direction", d)
                 result = f"已提出 {len(directions)} 个广告方向，等待用户选择"
+            elif kind == "script":
+                script_text = parsed.get("script", "")
+                if not isinstance(script_text, str) or not script_text.strip():
+                    raise ValueError("DeepSeek 未返回可用脚本")
+                execute(p, "script", {"text": script_text.strip()})
+                result = "已创建脚本新版本，请编辑并批准"
+            elif kind == "storyboard":
+                raw_shots = parsed.get("shots")
+                if not isinstance(raw_shots, list) or not 1 <= len(raw_shots) <= 12:
+                    raise ValueError("DeepSeek 分镜镜头数无效")
+                shots = []
+                for shot in raw_shots:
+                    if not isinstance(shot, dict) or not isinstance(shot.get("description"), str) or not shot["description"].strip():
+                        raise ValueError("DeepSeek 分镜缺少画面描述")
+                    try:
+                        duration = float(shot.get("duration"))
+                    except (TypeError, ValueError):
+                        raise ValueError("DeepSeek 分镜时长无效") from None
+                    if not 0.5 <= duration <= 15:
+                        raise ValueError("DeepSeek 单镜时长须在 0.5 至 15 秒之间")
+                    shots.append({"description": shot["description"].strip(), "duration": duration, "caption": str(shot.get("caption") or "").strip(), "ratio": "9:16", "reference_ids": [], "detail_ids": []})
+                execute(p, "storyboard", {"shots": shots})
+                result = f"已创建 {len(shots)} 镜分镜新版本，请编辑并批准"
+            elif kind == "prompt_generate":
+                raw_fields = parsed.get("fields")
+                if not isinstance(raw_fields, dict):
+                    raise ValueError("DeepSeek 未返回提示词字段")
+                allowed = ("identity", "scene", "composition", "lighting", "style", "ratio", "prohibited", "purpose")
+                fields = {key: str(raw_fields.get(key) or "").strip() for key in allowed}
+                if not fields["identity"] or not fields["purpose"]:
+                    raise ValueError("DeepSeek 提示词缺少产品身份或目标用途")
+                fields["ratio"] = fields["ratio"] or "9:16"
+                execute(p, "prompt", {**fields, "parent_id": p["prompts"][-1]["id"] if p["prompts"] else None})
+                result = "已创建提示词新版本，请逐项核对和编辑"
             elif kind == "prompt":
                 parent = next(x for x in p["prompts"] if x["id"] == body["prompt_id"])
                 fields = dict(parent["fields"])

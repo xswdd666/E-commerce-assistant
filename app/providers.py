@@ -15,6 +15,7 @@ def deepseek_complete(api_key, messages, *, json_mode=False, max_tokens=1600, tr
     payload = {"model": "deepseek-flash", "messages": messages, "max_tokens": max_tokens, "stream": False}
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
+        payload["thinking"] = {"type": "disabled"}
     request = Request(
         "https://api.deepseek.com/chat/completions",
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
