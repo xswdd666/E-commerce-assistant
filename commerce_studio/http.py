@@ -108,6 +108,8 @@ class Handler(BaseHTTPRequestHandler):
                     return STORE.confirm_brief(project, body.get("fact_ids", []))
                 if parts[3:] == ["masters", "confirm"]:
                     return STORE.confirm_master(project, body.get("asset_ids", []), body.get("inferred_details"))
+                if parts[3:] == ["masters", "verify-detail"]:
+                    return STORE.verify_master_detail(project, body.get("detail_id"), body.get("evidence_source_id"))
                 if parts[3:] == ["master-candidates", "quote"]:
                     return service.master_quote(STORE, project, body)
                 if parts[3:] == ["master-candidates", "run"]:

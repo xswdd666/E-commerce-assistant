@@ -228,6 +228,35 @@ class CommerceStudioTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "上游版本已变化"):
             self.store.add_script(self.project, "旧方向的新脚本")
 
+    def test_inferred_master_detail_needs_original_evidence_before_storyboard_approval(self):
+        original = self.approved_project()
+        master = self.store.confirm_master(self.project, self.project["master_versions"][-1]["asset_ids"], ["背面接口位置"])
+        detail_id = master["inferred_details"][0]["id"]
+        self.project["directions"].append({"id": "direction-1", "brief_id": self.project["brief_versions"][-1]["id"], "master_id": master["id"]})
+        self.store.approve_direction(self.project, "direction-1")
+        script = self.store.add_script(self.project, "展示接口")
+        self.store.approve_script(self.project, script["id"])
+        shot = {"visual": "接口特写", "duration": 3, "reference_asset_id": master["asset_ids"][2], "detail_ids": [detail_id]}
+        board = self.store.add_storyboard(self.project, [shot])
+        with self.assertRaisesRegex(ValueError, "未核实"):
+            self.store.approve_storyboard(self.project, board["id"])
+        with self.assertRaisesRegex(ValueError, "原始实拍"):
+            self.store.verify_master_detail(self.project, detail_id, master["asset_ids"][2])
+        verified = self.store.verify_master_detail(self.project, detail_id, original["id"])
+        self.assertEqual(verified["parent_id"], master["id"])
+        self.assertEqual(master["inferred_details"][0]["status"], "待核实")
+        self.assertEqual(verified["inferred_details"][0]["evidence_source_id"], original["id"])
+        with self.assertRaisesRegex(ValueError, "上游版本已变化"):
+            self.store.approve_storyboard(self.project, board["id"])
+        self.project["directions"].append({"id": "direction-2", "brief_id": self.project["brief_versions"][-1]["id"], "master_id": verified["id"]})
+        self.store.approve_direction(self.project, "direction-2")
+        revised_script = self.store.add_script(self.project, "展示已核实的背面接口")
+        self.store.approve_script(self.project, revised_script["id"])
+        revised_board = self.store.add_storyboard(self.project, [shot])
+        self.store.approve_storyboard(self.project, revised_board["id"])
+        self.project["external"]["flova_project_id"] = "remote-project"
+        self.assertEqual(flova_flow.quote(self.project)["input_snapshot"]["master_id"], verified["id"])
+
     def test_flova_run_uses_approved_storyboard_and_blocks_duplicate_round(self):
         self.approved_project()
         with self.assertRaisesRegex(ValueError, "批准完整分镜"):

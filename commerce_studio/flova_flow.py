@@ -63,6 +63,9 @@ def quote(project):
     brief = project["brief_versions"][-1]
     if not storyboard or not script or storyboard["script_id"] != script["id"] or storyboard["master_id"] != master["id"] or script["brief_id"] != brief["id"]:
         raise ValueError("上游版本已变化，请重新审核分镜")
+    details = {d["id"]: d for d in master.get("inferred_details", []) if isinstance(d, dict)}
+    if any(details.get(detail_id, {}).get("status") != "已核实" for shot in storyboard["shots"] for detail_id in shot.get("detail_ids", [])):
+        raise ValueError("分镜含未核实的推断细节，请重新审核")
     sources = {s["id"]: s for s in project["sources"]}
     assets = [{"id": asset_id, "sha256": sources[asset_id]["sha256"], "view": sources[asset_id]["view_label"]} for asset_id in master["asset_ids"]]
     snapshot = {"flova_project_id": project_id, "brief_id": brief["id"], "master_id": master["id"],
@@ -98,12 +101,14 @@ def _run_worker(store, project_id, task_id):
         brief = next(v for v in project["brief_versions"] if v["id"] == snapshot["brief_id"])
         script = next(v for v in project["script_versions"] if v["id"] == snapshot["script_id"])
         storyboard = next(v for v in project["storyboard_versions"] if v["id"] == snapshot["storyboard_id"])
+        master = next(v for v in project["master_versions"] if v["id"] == snapshot["master_id"])
         with tempfile.TemporaryDirectory(prefix="commerce-flova-") as temporary:
             directory = Path(temporary)
             material = directory / "approved-plan.txt"
             material.write_text("已确认产品事实：\n" + "\n".join(f"{f['field']}：{f['value']}" for f in brief["facts"])
                                 + "\n\n已批准脚本：\n" + script["text"] + "\n\n已批准分镜：\n"
-                                + "\n".join(f"镜头 {i+1}（{shot['duration']} 秒）：{shot['visual']}；字幕：{shot['caption']}" for i, shot in enumerate(storyboard["shots"])), encoding="utf-8")
+                                + "\n".join(f"镜头 {i+1}（{shot['duration']} 秒）：{shot['visual']}；字幕：{shot['caption']}；已核实细节：{', '.join(next(d['text'] for d in master.get('inferred_details', []) if isinstance(d, dict) and d['id'] == detail_id) for detail_id in shot.get('detail_ids', [])) or '无'}" for i, shot in enumerate(storyboard["shots"]))
+                                + "\n\n母版仍待核实的结构不得用于特写、规格或卖点宣称。", encoding="utf-8")
             files = [material]
             for asset in snapshot["assets"]:
                 source, raw = store.source_bytes(project, asset["id"])

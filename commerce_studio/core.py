@@ -323,8 +323,30 @@ class Store:
             raise ValueError("三视图必须来自同一候选组，且覆盖正面、侧面和背面")
         if any(s.get("brief_id") != project["brief_versions"][-1]["id"] for s in chosen):
             raise ValueError("三视图候选须基于当前已确认简报")
+        if inferred_details is None:
+            inferred_details = []
+        if not isinstance(inferred_details, list) or any(not isinstance(item, str) or not item.strip() for item in inferred_details):
+            raise ValueError("推断细节须逐项填写")
+        details = [{"id": ident(), "text": item.strip(), "status": "待核实", "evidence_source_id": None}
+                   for item in dict.fromkeys(inferred_details)]
         version = {"id": ident(), "brief_id": project["brief_versions"][-1]["id"],
-                   "asset_ids": list(asset_ids), "inferred_details": copy.deepcopy(inferred_details or []), "created": stamp()}
+                   "asset_ids": list(asset_ids), "inferred_details": details, "created": stamp()}
+        project["master_versions"].append(version)
+        self.save(project)
+        return version
+
+    def verify_master_detail(self, project, detail_id, evidence_source_id):
+        if not project["master_versions"]:
+            raise ValueError("请先确认母版")
+        master = project["master_versions"][-1]
+        detail = next((d for d in master["inferred_details"] if isinstance(d, dict) and d.get("id") == detail_id), None)
+        evidence = next((s for s in project["sources"] if s["id"] == evidence_source_id and not s.get("origin")), None)
+        if not detail or not evidence or not evidence["mime"].startswith("image/"):
+            raise ValueError("请选择推断细节和可核对的原始实拍")
+        version = copy.deepcopy(master)
+        version.update(id=ident(), parent_id=master["id"], created=stamp())
+        target = next(d for d in version["inferred_details"] if isinstance(d, dict) and d.get("id") == detail_id)
+        target.update(status="已核实", evidence_source_id=evidence_source_id, reviewed_at=stamp())
         project["master_versions"].append(version)
         self.save(project)
         return version
@@ -373,8 +395,13 @@ class Store:
                 raise ValueError("分镜时长无效") from exc
             if not 0.5 <= duration <= 15:
                 raise ValueError("单镜时长须在 0.5 至 15 秒之间")
+            detail_ids = shot.get("detail_ids") or []
+            known = {d["id"] for d in project["master_versions"][-1]["inferred_details"] if isinstance(d, dict)}
+            if not isinstance(detail_ids, list) or any(not isinstance(d, str) for d in detail_ids) or len(detail_ids) != len(set(detail_ids)) or any(d not in known for d in detail_ids):
+                raise ValueError("镜头引用了未知的推断细节")
             cleaned.append({"id": ident(), "visual": str(shot["visual"]).strip(), "duration": duration,
-                            "reference_asset_id": shot.get("reference_asset_id"), "caption": str(shot.get("caption") or "")})
+                            "reference_asset_id": shot.get("reference_asset_id"), "caption": str(shot.get("caption") or ""),
+                            "detail_ids": detail_ids})
         version = {"id": ident(), "script_id": project["script_approval"], "master_id": project["master_versions"][-1]["id"],
                    "shots": cleaned, "created": stamp()}
         project["storyboard_versions"].append(version)
@@ -388,6 +415,9 @@ class Store:
         approved_assets = set(project["master_versions"][-1]["asset_ids"])
         if any(shot["reference_asset_id"] not in approved_assets for shot in storyboard["shots"]):
             raise ValueError("每个镜头必须引用当前已确认母版素材")
+        details = {d["id"]: d for d in project["master_versions"][-1]["inferred_details"] if isinstance(d, dict)}
+        if any(details.get(detail_id, {}).get("status") != "已核实" for shot in storyboard["shots"] for detail_id in shot.get("detail_ids", [])):
+            raise ValueError("镜头涉及未核实的推断细节，请先用原始实拍逐项核实")
         project["storyboard_approval"] = storyboard_id
         self.save(project)
         return storyboard

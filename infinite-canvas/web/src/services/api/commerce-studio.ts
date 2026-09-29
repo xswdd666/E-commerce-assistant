@@ -2,6 +2,7 @@ const BASE = "http://127.0.0.1:8766/api";
 
 export type StudioSource = { id: string; name: string; mime: string; bytes: number; parse_status?: string; origin?: string; candidate_group?: number; view_label?: string; reference_ids?: string[]; gallery_plan_id?: string; gallery_item_id?: string; prompt_version_id?: string };
 export type StudioFact = { id: string; field: string; value: string; source_id?: string; status: "待核实" | "已知事实" | "创意假设" };
+export type InferredDetail = { id: string; text: string; status: "待核实" | "已核实"; evidence_source_id: string | null };
 export type ImageObservation = { id: string; task_id: string; original_id: string; candidate_id: string; brief_id: string; fields: Record<string, string>; corrections: Array<{ id: string; field: string; text: string; at: string }>; created: string };
 export type GalleryItem = { id: string; kind: string; prompt: string; ratio: string; title: string; subtitle: string; x: number; y: number };
 export type GalleryPlan = { id: string; parent_id: string | null; brief_id: string; master_id: string; origin: string; items: GalleryItem[]; created: string };
@@ -16,12 +17,12 @@ export type StudioProject = {
     facts: StudioFact[];
     image_observations: ImageObservation[];
     brief_versions: Array<{ id: string; facts: StudioFact[] }>;
-    master_versions: Array<{ id: string; asset_ids: string[]; inferred_details: string[] }>;
+    master_versions: Array<{ id: string; asset_ids: string[]; inferred_details: Array<InferredDetail | string> }>;
     directions: Array<{ id: string; brief_id: string; master_id: string; title: string; audience: string; opening: string; selling_point: string; ending: string }>;
     direction_approval: string | null;
     script_versions: Array<{ id: string; text: string; direction_id: string; brief_id: string; master_id: string }>;
     script_approval: string | null;
-    storyboard_versions: Array<{ id: string; shots: Array<{ id: string; visual: string; duration: number; reference_asset_id: string; caption: string }> }>;
+    storyboard_versions: Array<{ id: string; shots: Array<{ id: string; visual: string; duration: number; reference_asset_id: string; caption: string; detail_ids?: string[] }> }>;
     storyboard_approval: string | null;
     gallery_versions: GalleryPlan[];
     gallery_approval: string | null;
@@ -77,7 +78,8 @@ export const studioApi = {
     observationRun: (id: string, original_id: string, candidate_id: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/observations/run`, { original_id, candidate_id, approved_fingerprint, request_id }),
     observationCorrect: (id: string, observationId: string, field: string, text: string) => request(`/projects/${id}/observations/${observationId}/correct`, { field, text }),
     brief: (id: string, fact_ids: string[]) => request(`/projects/${id}/briefs/confirm`, { fact_ids }),
-    master: (id: string, asset_ids: string[]) => request(`/projects/${id}/masters/confirm`, { asset_ids, inferred_details: [] }),
+    master: (id: string, asset_ids: string[], inferred_details: string[]) => request(`/projects/${id}/masters/confirm`, { asset_ids, inferred_details }),
+    verifyMasterDetail: (id: string, detail_id: string, evidence_source_id: string) => request(`/projects/${id}/masters/verify-detail`, { detail_id, evidence_source_id }),
     masterQuote: (id: string, body: MasterRequest) => request<StudioQuote>(`/projects/${id}/master-candidates/quote`, body),
     masterRun: (id: string, body: MasterRequest & { approved_fingerprint: string; request_id: string }) => request(`/projects/${id}/master-candidates/run`, body),
     sync: (id: string, taskId: string) => request(`/projects/${id}/tasks/${taskId}/sync`, {}),
@@ -91,7 +93,7 @@ export const studioApi = {
     approveDirection: (id: string, direction_id: string) => request(`/projects/${id}/directions/approve`, { direction_id }),
     script: (id: string, text: string) => request(`/projects/${id}/scripts`, { text }),
     approveScript: (id: string, script_id: string) => request(`/projects/${id}/scripts/approve`, { script_id }),
-    storyboard: (id: string, shots: Array<{ visual: string; duration: number; reference_asset_id: string; caption: string }>) => request(`/projects/${id}/storyboards`, { shots }),
+    storyboard: (id: string, shots: Array<{ visual: string; duration: number; reference_asset_id: string; caption: string; detail_ids: string[] }>) => request(`/projects/${id}/storyboards`, { shots }),
     approveStoryboard: (id: string, storyboard_id: string) => request(`/projects/${id}/storyboards/approve`, { storyboard_id }),
     flovaCreate: (id: string) => request(`/projects/${id}/flova/create`, {}),
     flovaAttach: (id: string, project_id: string) => request(`/projects/${id}/flova/attach`, { project_id }),
