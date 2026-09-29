@@ -439,6 +439,11 @@ def sync(store, project, task_id):
                 elif task.get("kind") == "preview":
                     source["reference_ids"] = [task["source_id"]]
                     source["canvas_node_id"] = task["input_snapshot"]["config_node_id"]
+                elif task.get("kind") == "gallery_image":
+                    source["origin"] = "SeeAny gallery"
+                    source["gallery_plan_id"] = task["input_snapshot"]["plan_id"]
+                    source["gallery_item_id"] = task["input_snapshot"]["item"]["id"]
+                    source["reference_ids"] = [r["source_id"] for r in task["input_snapshot"]["references"]]
                 task["asset_ids"].append(source["id"])
                 task["imported_urls"].append(url)
                 store.save(project)

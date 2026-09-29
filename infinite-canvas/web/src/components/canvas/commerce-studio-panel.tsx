@@ -7,6 +7,7 @@ import { buildNodeGenerationContext, hydrateNodeGenerationContext } from "@/comp
 import { CanvasNodeType } from "@/types/canvas";
 import { CommercePlanSection } from "@/components/canvas/commerce-plan-section";
 import { CommerceFlovaSection } from "@/components/canvas/commerce-flova-section";
+import { CommerceGallerySection } from "@/components/canvas/commerce-gallery-section";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
 type Props = { open: boolean; onClose: () => void; canvasId: string; title: string; nodes: CanvasNodeData[]; connections: CanvasConnection[]; selectedNodeId?: string; onInsertImage: (dataUrl: string, title: string) => Promise<void> };
@@ -69,6 +70,11 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
     const confirmed = project?.facts.filter((fact) => fact.status === "已知事实") || [];
     const masterRequest: MasterRequest = { group: candidateGroup, view_label: viewLabel, views: viewPreset, source_id: candidateSourceId || "" };
     const candidates = project?.sources.filter((source) => source.origin === "SeeAny candidate") || [];
+    const confirmedCosts = Object.entries((project?.costs || []).reduce<Record<string, number>>((totals, entry) => {
+        if (entry.actual != null && entry.currency) totals[entry.currency] = (totals[entry.currency] || 0) + entry.actual;
+        return totals;
+    }, {}));
+    const pendingCostCount = project?.costs.filter((entry) => entry.actual == null).length || 0;
 
     return (
         <Drawer title="广告电商工作台" open={open} onClose={onClose} width={460} styles={{ body: { overflowY: "auto" } }}>
@@ -151,6 +157,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                             {project.chat.map((item) => <div key={item.id} className="mt-3"><Typography.Text strong>{item.prompt}</Typography.Text><Typography.Paragraph className="mt-1 whitespace-pre-wrap">{item.reply}</Typography.Paragraph></div>)}
                         </section>
                         <CommercePlanSection project={project} busy={busy} act={act} />
+                        <CommerceGallerySection project={project} busy={busy} act={act} />
                         <CommerceFlovaSection project={project} busy={busy} act={act} />
                         <section>
                             <Typography.Title level={5}>画布输入</Typography.Title>
@@ -173,7 +180,8 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                         </section>
                         <section>
                             <Typography.Title level={5}>任务与费用</Typography.Title>
-                            <Typography.Paragraph>任务 {project.tasks.length} 个；未核实价格显示“未知”。</Typography.Paragraph>
+                            <Typography.Paragraph>任务 {project.tasks.length} 个；待结算 {pendingCostCount} 个。{confirmedCosts.length ? `已确认实付：${confirmedCosts.map(([unit, amount]) => `${amount.toFixed(2)} ${unit}`).join("、")}` : "尚无供应商返回的可信实付金额"}。预估与实付分开记录；未知价格不阻止手动提交。</Typography.Paragraph>
+                            {project.costs.map((entry) => <div key={entry.id}><Tag>{entry.provider}</Tag>{entry.stage} · {entry.purpose} · {entry.status} · 实付 {entry.actual == null ? "未知" : `${entry.actual} ${entry.currency || "单位待核实"}`}</div>)}
                             {project.tasks.filter((task) => task.kind === "preview").map((task) => <div key={task.id} className="mt-2"><Tag>{task.status}</Tag>画布试图 <Button type="link" disabled={busy} onClick={() => void act(() => studioApi.sync(project.id, task.id))}>同步状态</Button>{task.asset_ids?.length && task.source_id ? <Button type="link" onClick={() => void (async () => { try { const [original, generated] = await Promise.all([studioApi.sourceData(project.id, task.source_id!), studioApi.sourceData(project.id, task.asset_ids![0])]); setComparison({ original: original.data_url, generated: generated.data_url }); } catch (cause) { setError(cause instanceof Error ? cause.message : "读取图片失败"); } })()}>对照查看</Button> : null}</div>)}
                         </section>
                     </>

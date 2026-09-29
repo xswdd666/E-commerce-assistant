@@ -59,6 +59,7 @@ class Store:
                    "updated": stamp(), "sources": [], "facts": [], "brief_versions": [], "master_versions": [],
                    "directions": [], "direction_approval": None, "script_versions": [], "script_approval": None,
                    "storyboard_versions": [], "storyboard_approval": None, "external": {"flova_project_id": "", "flova_project_url": ""},
+                   "gallery_versions": [], "gallery_approval": None, "gallery_choices": {}, "gallery_reviews": [],
                    "nodes": [], "edges": [], "tasks": [], "costs": [], "chat": []}
         self.save(project)
         return project
@@ -69,12 +70,39 @@ class Store:
 
     def load(self, project_id):
         try:
-            return json.loads(self._path(project_id).read_text(encoding="utf-8"))
+            project = json.loads(self._path(project_id).read_text(encoding="utf-8"))
+            project.setdefault("gallery_versions", [])
+            project.setdefault("gallery_approval", None)
+            project.setdefault("gallery_choices", {})
+            project.setdefault("gallery_reviews", [])
+            project.setdefault("costs", [])
+            return project
         except FileNotFoundError as exc:
             raise ValueError("项目不存在") from exc
 
     def save(self, project):
         with self.lock:
+            costs = {entry["task_id"]: entry for entry in project.setdefault("costs", [])}
+            for task in project.get("tasks", []):
+                if not task.get("id") or not task.get("provider"):
+                    continue
+                entry = costs.get(task["id"])
+                if entry is None:
+                    entry = {"id": ident(), "task_id": task["id"], "provider": task["provider"],
+                             "stage": task.get("kind") or "canvas", "node_id": task.get("node_id"),
+                             "purpose": "草稿" if task.get("kind") in ("preview", "chat", "gallery_plan", "facts", "directions") else "正式",
+                             "model": task.get("model"), "estimate": task.get("estimate"), "actual": None,
+                             "currency": task.get("currency"), "pricing_source": task.get("pricing_source") or "未核实",
+                             "submitted_at": task.get("created") or stamp(), "settled_at": None,
+                             "status": task.get("status")}
+                    project["costs"].append(entry)
+                    costs[task["id"]] = entry
+                entry["status"] = task.get("status")
+                actual = task.get("actual")
+                if isinstance(actual, (int, float)) and not isinstance(actual, bool) and actual >= 0:
+                    entry["actual"] = actual
+                    entry["currency"] = task.get("currency")
+                    entry["settled_at"] = entry["settled_at"] or stamp()
             project["updated"] = stamp()
             path = self._path(project["id"])
             tmp = path.with_suffix(".tmp")

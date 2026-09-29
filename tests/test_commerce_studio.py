@@ -1,12 +1,17 @@
 import base64
+import io
+import json
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
+from PIL import Image
+
 from commerce_studio.core import Store
 from commerce_studio import service
-from commerce_studio import flova_flow
+from commerce_studio import flova_flow, gallery
 
 
 class CommerceStudioTests(unittest.TestCase):
@@ -200,6 +205,73 @@ class CommerceStudioTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Flova"):
             service.run(self.store, self.project, task["id"], {"approved_fingerprint": quote["fingerprint"], "request_id": "request-456"})
         self.assertFalse(self.project["tasks"])
+
+    def test_gallery_plan_approval_image_review_and_editable_export(self):
+        self.approved_project()
+        first = gallery.default_plan(self.store, self.project)
+        self.assertEqual(len(first["items"]), 6)
+        edited = json.loads(json.dumps(first["items"], ensure_ascii=False))
+        edited[0].update(title="真实白色外观", subtitle="商品主图", x=50, y=12)
+        plan = gallery.save_plan(self.store, self.project, edited, parent_id=first["id"])
+        gallery.approve_plan(self.store, self.project, plan["id"])
+        item = plan["items"][0]
+        quote = gallery.image_quote(self.store, self.project, item["id"])
+        with patch.object(gallery, "provider_key", return_value="test-key"), patch.object(gallery.seeany, "upload_image", return_value="https://seeany.com/upload"), patch.object(gallery.seeany, "submit", return_value={"data": {"task_uuid": "gallery-remote"}}) as submit:
+            task = gallery.run_image(self.store, self.project, {"item_id": item["id"], "approved_fingerprint": quote["fingerprint"], "request_id": "gallery-request-123"})
+        self.assertEqual(task["remote_id"], "gallery-remote")
+        self.assertEqual(submit.call_args.args[1], "/api/ai/grouptask")
+        self.assertEqual(submit.call_args.args[2]["groups"][0]["prompt"], item["prompt"])
+        picture = io.BytesIO()
+        Image.new("RGB", (320, 320), "white").save(picture, format="PNG")
+        response = {"data": {"task": {"status": "succeeded"}, "works": [{"url": "https://cdn.seeany.com/gallery.png"}]}}
+        with patch.object(service, "provider_key", return_value="test-key"), patch.object(service.seeany, "task_status", return_value=response), patch.object(service.seeany, "download_image", return_value=(picture.getvalue(), ".png")):
+            service.sync(self.store, self.project, task["id"])
+        generated = self.project["sources"][-1]
+        self.assertEqual(generated["gallery_item_id"], item["id"])
+        gallery.review_image(self.store, self.project, item["id"], generated["id"], "采用")
+        with self.assertRaisesRegex(ValueError, "每张套图"):
+            gallery.export_gallery(self.store, self.project)
+        for remaining in plan["items"][1:]:
+            # Simulate independently generated candidates for the remaining approved slots.
+            self.project["tasks"].append({"kind": "gallery_image", "input_snapshot": {"item": remaining, "plan_id": plan["id"]}, "asset_ids": [generated["id"]]})
+            gallery.review_image(self.store, self.project, remaining["id"], generated["id"], "采用")
+        with zipfile.ZipFile(io.BytesIO(gallery.export_gallery(self.store, self.project))) as archive:
+            names = archive.namelist()
+            self.assertEqual(sum(name.endswith(".png") for name in names), 6)
+            self.assertEqual(sum(name.endswith(".svg") for name in names), 6)
+            self.assertIn("真实白色外观", archive.read("gallery/01-主图.svg").decode())
+            manifest = json.loads(archive.read("source-manifest.json"))
+            self.assertEqual(manifest["images"][0]["source_id"], generated["id"])
+
+    def test_gallery_planning_uses_only_confirmed_facts_and_blocks_ambiguous_repeat(self):
+        self.approved_project()
+        self.store.add_fact(self.project, "虚构容量", "99 升", status="待核实")
+        offer = gallery.plan_quote(self.store, self.project, "白底为主")
+        self.assertNotIn("99 升", str(offer["input_snapshot"]))
+        returned = {"items": [{"cateName": "主图", "prompt": "白底产品主图", "imgRatio": "1:1"}]}
+        with patch.object(gallery, "provider_key", return_value="test-key"), patch.object(gallery.seeany, "upload_image", return_value="https://seeany.com/upload"), patch.object(gallery.seeany, "submit", return_value=returned) as submit:
+            task = gallery.run_plan(self.store, self.project, {"requirement": "白底为主", "approved_fingerprint": offer["fingerprint"], "request_id": "plan-request-123"})
+        self.assertEqual(task["status"], "待审核")
+        self.assertNotIn("99 升", submit.call_args.args[2]["sellingPoints"])
+        self.assertEqual(self.project["gallery_versions"][-1]["origin"], "SeeAny")
+        self.project["tasks"].append({"kind": "gallery_plan", "status": "待核对"})
+        with self.assertRaisesRegex(ValueError, "尚未核对"):
+            gallery.plan_quote(self.store, self.project)
+
+    def test_cost_ledger_keeps_unknown_separate_from_confirmed_actual(self):
+        task = {"id": "billable-task", "kind": "gallery_image", "provider": "SeeAny", "status": "远端运行中",
+                "estimate": None, "actual": None, "currency": None, "created": "2026-09-29T00:00:00+00:00"}
+        self.project["tasks"].append(task)
+        self.store.save(self.project)
+        self.store.save(self.project)
+        self.assertEqual(len(self.project["costs"]), 1)
+        self.assertIsNone(self.project["costs"][0]["actual"])
+        task.update(status="失败", actual=0.5, currency="CNY")
+        self.store.save(self.project)
+        entry = self.project["costs"][0]
+        self.assertEqual(entry["actual"], 0.5)
+        self.assertEqual(entry["currency"], "CNY")
+        self.assertEqual(entry["status"], "失败")
 
     def test_canvas_preview_uses_snapshot_and_saves_original_reference(self):
         self.approved_project()

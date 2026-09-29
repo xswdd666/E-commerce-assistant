@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .core import Store
-from . import flova_flow, service
+from . import flova_flow, gallery, service
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -33,6 +33,18 @@ class Handler(BaseHTTPRequestHandler):
         if origin in ("http://127.0.0.1:3000", "http://localhost:3000", "http://127.0.0.1:5173", "http://localhost:5173"):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _send_archive(self, raw, filename):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-store")
+        origin = self.headers.get("Origin", "")
+        if origin in ("http://127.0.0.1:3000", "http://localhost:3000", "http://127.0.0.1:5173", "http://localhost:5173"):
+            self.send_header("Access-Control-Allow-Origin", origin)
         self.end_headers()
         self.wfile.write(raw)
 
@@ -124,6 +136,22 @@ class Handler(BaseHTTPRequestHandler):
                     return flova_flow.run(STORE, project, body)
                 if len(parts) == 6 and parts[3] == "flova" and parts[5] == "recover":
                     return flova_flow.recover(STORE, project, parts[4])
+                if parts[3:] == ["gallery", "default"]:
+                    return gallery.default_plan(STORE, project)
+                if parts[3:] == ["gallery", "plans"]:
+                    return gallery.save_plan(STORE, project, body.get("items"), parent_id=body.get("parent_id"))
+                if parts[3:] == ["gallery", "plans", "approve"]:
+                    return gallery.approve_plan(STORE, project, body.get("plan_id"))
+                if parts[3:] == ["gallery", "planning", "quote"]:
+                    return gallery.plan_quote(STORE, project, body.get("requirement", ""))
+                if parts[3:] == ["gallery", "planning", "run"]:
+                    return gallery.run_plan(STORE, project, body)
+                if parts[3:] == ["gallery", "images", "quote"]:
+                    return gallery.image_quote(STORE, project, body.get("item_id"))
+                if parts[3:] == ["gallery", "images", "run"]:
+                    return gallery.run_image(STORE, project, body)
+                if parts[3:] == ["gallery", "images", "review"]:
+                    return gallery.review_image(STORE, project, body.get("item_id"), body.get("source_id"), body.get("decision"), body.get("reason", ""))
                 if parts[3:] == ["nodes"]:
                     return STORE.add_node(project, body.get("kind"), body.get("data"))
                 if parts[3:] == ["edges"]:
@@ -138,6 +166,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         try:
+            parts = [part for part in urlparse(self.path).path.split("/") if part]
+            if len(parts) == 5 and parts[:2] == ["api", "projects"] and parts[3:] == ["gallery", "export"]:
+                project = STORE.load(parts[2])
+                self._send_archive(gallery.export_gallery(STORE, project), f"commerce-gallery-{project['id']}.zip")
+                return
             self._send(200, self._route("GET"))
         except ValueError as exc:
             self._send(400, {"error": str(exc)})

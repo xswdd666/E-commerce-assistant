@@ -1,7 +1,10 @@
 const BASE = "http://127.0.0.1:8766/api";
 
-export type StudioSource = { id: string; name: string; mime: string; bytes: number; parse_status?: string; origin?: string; candidate_group?: number; view_label?: string; reference_ids?: string[] };
+export type StudioSource = { id: string; name: string; mime: string; bytes: number; parse_status?: string; origin?: string; candidate_group?: number; view_label?: string; reference_ids?: string[]; gallery_plan_id?: string; gallery_item_id?: string };
 export type StudioFact = { id: string; field: string; value: string; source_id?: string; status: "待核实" | "已知事实" | "创意假设" };
+export type GalleryItem = { id: string; kind: string; prompt: string; ratio: string; title: string; subtitle: string; x: number; y: number };
+export type GalleryPlan = { id: string; parent_id: string | null; brief_id: string; master_id: string; origin: string; items: GalleryItem[]; created: string };
+export type StudioCost = { id: string; task_id: string; provider: string; stage: string; node_id: string | null; purpose: string; model: string | null; estimate: number | null; actual: number | null; currency: string | null; pricing_source: string; status: string };
 export type StudioProject = {
     id: string;
     name: string;
@@ -15,8 +18,13 @@ export type StudioProject = {
     script_approval: string | null;
     storyboard_versions: Array<{ id: string; shots: Array<{ id: string; visual: string; duration: number; reference_asset_id: string; caption: string }> }>;
     storyboard_approval: string | null;
+    gallery_versions: GalleryPlan[];
+    gallery_approval: string | null;
+    gallery_choices: Record<string, string>;
+    gallery_reviews: Array<{ id: string; item_id: string; source_id: string; decision: string; reason: string }>;
+    costs: StudioCost[];
     external: { flova_project_id: string; flova_project_url: string };
-    tasks: Array<{ id: string; provider: string; kind?: string; status: string; estimate: number | null; actual: number | null; candidate_group?: number; view_label?: string; asset_ids?: string[]; source_id?: string; pending_actions?: Array<{ type?: string; message?: string; blocking?: boolean }> }>;
+    tasks: Array<{ id: string; provider: string; kind?: string; status: string; estimate: number | null; actual: number | null; candidate_group?: number; view_label?: string; asset_ids?: string[]; source_id?: string; input_snapshot?: { item?: { id: string } }; pending_actions?: Array<{ type?: string; message?: string; blocking?: boolean }> }>;
     chat: Array<{ id: string; prompt: string; reply: string; brief_id?: string; created: string }>;
 };
 
@@ -72,4 +80,20 @@ export const studioApi = {
     flovaQuote: (id: string) => request<StudioQuote>(`/projects/${id}/flova/quote`, {}),
     flovaRun: (id: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/flova/run`, { approved_fingerprint, request_id }),
     flovaRecover: (id: string, taskId: string) => request(`/projects/${id}/flova/${taskId}/recover`, {}),
+    galleryDefault: (id: string) => request<GalleryPlan>(`/projects/${id}/gallery/default`, {}),
+    gallerySave: (id: string, items: Array<Omit<GalleryItem, "id"> | GalleryItem>, parent_id: string | null) => request<GalleryPlan>(`/projects/${id}/gallery/plans`, { items, parent_id }),
+    galleryApprove: (id: string, plan_id: string) => request<GalleryPlan>(`/projects/${id}/gallery/plans/approve`, { plan_id }),
+    galleryPlanQuote: (id: string, requirement: string) => request<StudioQuote>(`/projects/${id}/gallery/planning/quote`, { requirement }),
+    galleryPlanRun: (id: string, requirement: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/gallery/planning/run`, { requirement, approved_fingerprint, request_id }),
+    galleryImageQuote: (id: string, item_id: string) => request<StudioQuote>(`/projects/${id}/gallery/images/quote`, { item_id }),
+    galleryImageRun: (id: string, item_id: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/gallery/images/run`, { item_id, approved_fingerprint, request_id }),
+    galleryReview: (id: string, item_id: string, source_id: string, decision: "采用" | "废图", reason = "") => request(`/projects/${id}/gallery/images/review`, { item_id, source_id, decision, reason }),
+    galleryExport: async (id: string) => {
+        const response = await fetch(`${BASE}/projects/${id}/gallery/export`);
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || "套图导出失败");
+        }
+        return response.blob();
+    },
 };
