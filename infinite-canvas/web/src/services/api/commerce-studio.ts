@@ -27,9 +27,11 @@ export type StudioProject = {
     prompt_versions: PromptVersion[];
     prompt_adoption: { version_id: string; source_id: string; review_id: string } | null;
     prompt_reviews: Array<{ id: string; version_id: string; source_id: string; decision: string; reason: string }>;
+    video_approval: { task_id: string; stream_chat_id: string; approved_at: string } | null;
+    deliverables: Array<{ id: string; kind: string; task_id: string; name: string; bytes: number; sha256: string }>;
     costs: StudioCost[];
     external: { flova_project_id: string; flova_project_url: string };
-    tasks: Array<{ id: string; provider: string; kind?: string; status: string; estimate: number | null; actual: number | null; candidate_group?: number; view_label?: string; asset_ids?: string[]; source_id?: string; input_snapshot?: { item?: { id: string }; version_id?: string }; pending_actions?: Array<{ type?: string; message?: string; blocking?: boolean }> }>;
+    tasks: Array<{ id: string; provider: string; kind?: string; status: string; estimate: number | null; actual: number | null; candidate_group?: number; view_label?: string; asset_ids?: string[]; source_id?: string; input_snapshot?: { item?: { id: string }; version_id?: string }; error?: string; pending_actions?: Array<{ type?: string; message?: string; blocking?: boolean }> }>;
     chat: Array<{ id: string; prompt: string; reply: string; brief_id?: string; created: string }>;
 };
 
@@ -85,6 +87,19 @@ export const studioApi = {
     flovaQuote: (id: string) => request<StudioQuote>(`/projects/${id}/flova/quote`, {}),
     flovaRun: (id: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/flova/run`, { approved_fingerprint, request_id }),
     flovaRecover: (id: string, taskId: string) => request(`/projects/${id}/flova/${taskId}/recover`, {}),
+    flovaResources: (id: string) => request<{ items: Array<{ resource_id: string; name?: string; media_type?: string; status?: string }>; unparsed: boolean }>(`/projects/${id}/flova/resources`, {}),
+    flovaApprove: (id: string, task_id: string) => request(`/projects/${id}/flova/approve`, { task_id }),
+    flovaExportQuote: (id: string) => request<StudioQuote>(`/projects/${id}/flova/export/quote`, {}),
+    flovaExportRun: (id: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/flova/export/run`, { approved_fingerprint, request_id }),
+    flovaExportRecover: (id: string, taskId: string) => request(`/projects/${id}/flova/export/${taskId}/recover`, {}),
+    videoBlob: async (id: string, deliverableId: string) => {
+        const response = await fetch(`${BASE}/projects/${id}/deliverables/${deliverableId}`);
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || "无法读取本地视频");
+        }
+        return response.blob();
+    },
     galleryDefault: (id: string) => request<GalleryPlan>(`/projects/${id}/gallery/default`, {}),
     gallerySave: (id: string, items: Array<Omit<GalleryItem, "id"> | GalleryItem>, parent_id: string | null) => request<GalleryPlan>(`/projects/${id}/gallery/plans`, { items, parent_id }),
     galleryApprove: (id: string, plan_id: string) => request<GalleryPlan>(`/projects/${id}/gallery/plans/approve`, { plan_id }),

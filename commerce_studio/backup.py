@@ -24,6 +24,13 @@ def export_project(store, project):
         for source in project["sources"]:
             _, raw = store.source_bytes(project, source["id"])
             output.writestr(f"files/{source['id']}", raw)
+        for deliverable in project.get("deliverables", []):
+            if deliverable.get("kind") != "video":
+                raise ValueError("备份包含未知交付物类型")
+            raw = (store.root / "deliverables" / project["id"] / f"{deliverable['id']}.mp4").read_bytes()
+            if hashlib.sha256(raw).hexdigest() != deliverable.get("sha256"):
+                raise ValueError("交付物文件校验失败")
+            output.writestr(f"deliverables/{deliverable['id']}.mp4", raw)
     return archive.getvalue()
 
 
@@ -56,6 +63,17 @@ def restore_project(store, raw):
                 if hashlib.sha256(content).hexdigest() != source.get("sha256"):
                     raise ValueError("备份来源文件校验失败")
                 source_files[source_id] = content
+            deliverable_files = {}
+            for deliverable in original.get("deliverables", []):
+                deliverable_id = deliverable.get("id")
+                if not isinstance(deliverable_id, str) or len(deliverable_id) != 32 or any(c not in "0123456789abcdef" for c in deliverable_id):
+                    raise ValueError("备份包含无效交付物标识")
+                if deliverable_id in deliverable_files:
+                    raise ValueError("备份交付物标识重复")
+                content = archive.read(f"deliverables/{deliverable_id}.mp4")
+                if hashlib.sha256(content).hexdigest() != deliverable.get("sha256"):
+                    raise ValueError("备份交付物校验失败")
+                deliverable_files[deliverable_id] = content
     except (KeyError, zipfile.BadZipFile, json.JSONDecodeError) as exc:
         raise ValueError("备份 ZIP 缺少必要文件或内容已损坏") from exc
     project = copy.deepcopy(original)
@@ -70,5 +88,10 @@ def restore_project(store, raw):
     directory.mkdir(parents=True, exist_ok=False)
     for source_id, content in source_files.items():
         (directory / source_id).write_bytes(content)
+    if deliverable_files:
+        video_directory = store.root / "deliverables" / project["id"]
+        video_directory.mkdir(parents=True, exist_ok=False)
+        for deliverable_id, content in deliverable_files.items():
+            (video_directory / f"{deliverable_id}.mp4").write_bytes(content)
     store.save(project)
     return project

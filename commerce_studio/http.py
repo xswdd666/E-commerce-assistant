@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .core import Store
-from . import backup, flova_flow, gallery, prompts, service
+from . import backup, flova_flow, gallery, prompts, service, video_export
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -36,9 +36,9 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
-    def _send_archive(self, raw, filename):
+    def _send_binary(self, raw, filename, mime):
         self.send_response(200)
-        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Type", mime)
         self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Cache-Control", "no-store")
@@ -47,6 +47,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", origin)
         self.end_headers()
         self.wfile.write(raw)
+
+    def _send_archive(self, raw, filename):
+        self._send_binary(raw, filename, "application/zip")
 
     def do_OPTIONS(self):
         self.send_response(204)
@@ -132,10 +135,20 @@ class Handler(BaseHTTPRequestHandler):
                     return flova_flow.attach_project(STORE, project, body.get("project_id"))
                 if parts[3:] == ["flova", "quote"]:
                     return flova_flow.quote(project)
+                if parts[3:] == ["flova", "resources"]:
+                    return flova_flow.resources(project)
+                if parts[3:] == ["flova", "approve"]:
+                    return flova_flow.approve_video(STORE, project, body.get("task_id"))
                 if parts[3:] == ["flova", "run"]:
                     return flova_flow.run(STORE, project, body)
                 if len(parts) == 6 and parts[3] == "flova" and parts[5] == "recover":
                     return flova_flow.recover(STORE, project, parts[4])
+                if parts[3:] == ["flova", "export", "quote"]:
+                    return video_export.quote(project)
+                if parts[3:] == ["flova", "export", "run"]:
+                    return video_export.run(STORE, project, body)
+                if len(parts) == 7 and parts[3:5] == ["flova", "export"] and parts[6] == "recover":
+                    return video_export.recover(STORE, project, parts[5])
                 if parts[3:] == ["gallery", "default"]:
                     return gallery.default_plan(STORE, project)
                 if parts[3:] == ["gallery", "plans"]:
@@ -182,6 +195,10 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "backup":
                 project = STORE.load(parts[2])
                 self._send_archive(backup.export_project(STORE, project), f"commerce-project-{project['id']}.zip")
+                return
+            if len(parts) == 5 and parts[:2] == ["api", "projects"] and parts[3] == "deliverables":
+                project = STORE.load(parts[2])
+                self._send_binary(video_export.deliverable_bytes(STORE, project, parts[4]), "flova-final.mp4", "video/mp4")
                 return
             if len(parts) == 5 and parts[:2] == ["api", "projects"] and parts[3:] == ["gallery", "export"]:
                 project = STORE.load(parts[2])

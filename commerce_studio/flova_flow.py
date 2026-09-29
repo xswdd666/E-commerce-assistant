@@ -16,6 +16,19 @@ ACTIVE = set()
 ACTIVE_LOCK = threading.Lock()
 
 
+def _apply_run_result(task, result):
+    task["remote_id"] = result.get("stream_chat_id") or task.get("remote_id")
+    task["result_summary"] = {key: result.get(key) for key in ("status", "terminal", "stream_chat_id", "project_url")}
+    task["pending_actions"] = [{"type": a.get("type"), "message": a.get("message"), "blocking": a.get("blocking", True)} for a in result.get("pending_actions") or []]
+    status = str(result.get("status") or "").lower()
+    task["status"] = ("待用户确认" if any(a["blocking"] for a in task["pending_actions"])
+                      else "待审核" if result.get("terminal") and status in ("success", "completed")
+                      else "失败" if result.get("terminal") and status in ("failed", "error")
+                      else "待核对")
+    task["updated"] = stamp()
+    return task
+
+
 def create_project(store, project):
     if project["external"]["flova_project_id"]:
         raise ValueError("已关联 Flova 项目")
@@ -119,11 +132,7 @@ def _run_worker(store, project_id, task_id):
         with store.lock:
             project = store.load(project_id)
             task = next(t for t in project["tasks"] if t["id"] == task_id)
-            task["remote_id"] = result.get("stream_chat_id")
-            task["result_summary"] = {key: result.get(key) for key in ("terminal", "stream_chat_id", "project_url")}
-            task["pending_actions"] = [{"type": a.get("type"), "message": a.get("message"), "blocking": a.get("blocking", True)} for a in result.get("pending_actions") or []]
-            task["status"] = "待用户确认" if any(a["blocking"] for a in task["pending_actions"]) else "待审核" if result.get("terminal") else "待核对"
-            task["updated"] = stamp()
+            _apply_run_result(task, result)
             store.save(project)
     except Exception as exc:
         with store.lock:
@@ -155,6 +164,7 @@ def run(store, project, body):
     task = {"id": ident(), "kind": "video", "provider": "Flova", "status": "已排队",
             "idempotency_key": request_id, "input_snapshot": offer["input_snapshot"], "estimate": None,
             "actual": None, "currency": None, "remote_id": None, "attempts": 1, "created": stamp(), "updated": stamp()}
+    project["video_approval"] = None
     project["tasks"].append(task)
     store.save(project)
     threading.Thread(target=_run_worker, args=(store, project["id"], task["id"]), daemon=True).start()
@@ -184,10 +194,44 @@ def recover(store, project, task_id):
         task["updated"] = stamp()
         store.save(project)
         return task
-    task["remote_id"] = result.get("stream_chat_id") or task["remote_id"]
-    task["result_summary"] = {key: result.get(key) for key in ("terminal", "stream_chat_id", "project_url")}
-    task["pending_actions"] = [{"type": a.get("type"), "message": a.get("message"), "blocking": a.get("blocking", True)} for a in result.get("pending_actions") or []]
-    task["status"] = "待用户确认" if any(a["blocking"] for a in task["pending_actions"]) else "待审核" if result.get("terminal") else "待核对"
-    task["updated"] = stamp()
+    _apply_run_result(task, result)
     store.save(project)
     return task
+
+
+def resources(project):
+    project_id = project["external"]["flova_project_id"]
+    if not project_id:
+        raise ValueError("请先关联 Flova 项目")
+    result = flova.invoke("project", "resources", project_id, "--types", "image,video,audio,music")
+    found = []
+
+    def visit(value):
+        if isinstance(value, list):
+            for item in value:
+                visit(item)
+        elif isinstance(value, dict):
+            media_type = str(value.get("media_type") or value.get("type") or "").lower()
+            resource_id = value.get("resource_id") or value.get("id")
+            if media_type in ("image", "video", "audio", "music") and resource_id:
+                found.append({key: value.get(key) for key in ("resource_id", "name", "status", "media_type", "artifact_role", "created_at")})
+                found[-1]["resource_id"] = str(resource_id)
+                found[-1]["media_type"] = media_type
+            for child in value.values():
+                if isinstance(child, (dict, list)):
+                    visit(child)
+
+    visit(result)
+    unique = list({item["resource_id"]: item for item in found}.values())
+    return {"items": unique, "unparsed": bool(result) and not bool(unique)}
+
+
+def approve_video(store, project, task_id):
+    task = next((t for t in project["tasks"] if t["id"] == task_id and t.get("kind") == "video" and t.get("provider") == "Flova"), None)
+    if not task or task["status"] != "待审核" or not task.get("remote_id"):
+        raise ValueError("请先等待 Flova 本轮成功完成并人工核对镜头")
+    if any(action.get("blocking") for action in task.get("pending_actions") or []):
+        raise ValueError("Flova 尚有待用户确认的操作")
+    project["video_approval"] = {"task_id": task_id, "stream_chat_id": task["remote_id"], "approved_at": stamp(), "reviewer": "local"}
+    store.save(project)
+    return project["video_approval"]

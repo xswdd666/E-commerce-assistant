@@ -14,7 +14,7 @@ from PIL import Image
 
 from commerce_studio.core import Store
 from commerce_studio import service
-from commerce_studio import backup, flova_flow, gallery, http as bridge, prompts
+from commerce_studio import backup, flova_flow, gallery, http as bridge, prompts, video_export
 
 
 class CommerceStudioTests(unittest.TestCase):
@@ -191,10 +191,39 @@ class CommerceStudioTests(unittest.TestCase):
         task = {"id": "local-task", "provider": "Flova", "status": "待核对", "remote_id": "this-run",
                 "input_snapshot": {"flova_project_id": "remote-project"}}
         self.project["tasks"].append(task)
-        with patch.object(flova_flow.flova, "recover", return_value={"terminal": True, "stream_chat_id": "older-run"}), patch.object(flova_flow.flova, "run_result", return_value={"terminal": True, "stream_chat_id": "this-run", "pending_actions": []}) as detail:
+        with patch.object(flova_flow.flova, "recover", return_value={"terminal": True, "stream_chat_id": "older-run"}), patch.object(flova_flow.flova, "run_result", return_value={"status": "completed", "terminal": True, "stream_chat_id": "this-run", "pending_actions": []}) as detail:
             recovered = flova_flow.recover(self.store, self.project, task["id"])
         self.assertEqual(recovered["status"], "待审核")
         detail.assert_called_once_with("remote-project", "this-run")
+
+    def test_flova_terminal_failure_is_not_presented_as_reviewable_video(self):
+        task = {}
+        flova_flow._apply_run_result(task, {"status": "failed", "terminal": True, "stream_chat_id": "failed-run", "pending_actions": []})
+        self.assertEqual(task["status"], "失败")
+
+    def test_flova_export_requires_review_and_keeps_final_video_local(self):
+        self.project["external"]["flova_project_id"] = "remote-project"
+        run_task = {"id": "creative-run", "kind": "video", "provider": "Flova", "status": "待审核", "remote_id": "stream-123",
+                    "pending_actions": [], "estimate": None, "actual": None, "currency": None, "created": "2026-09-29T00:00:00+00:00"}
+        self.project["tasks"].append(run_task)
+        with self.assertRaisesRegex(ValueError, "批准导出"):
+            video_export.quote(self.project)
+        flova_flow.approve_video(self.store, self.project, "creative-run")
+        with patch.object(video_export.flova, "readiness", return_value={"can_export": True}):
+            offer = video_export.quote(self.project)
+            with patch.object(video_export.threading, "Thread") as thread:
+                export_task = video_export.run(self.store, self.project, {"approved_fingerprint": offer["fingerprint"], "request_id": "export-request-123"})
+            thread.assert_called_once()
+        with patch.object(video_export, "urlopen", side_effect=lambda *_args, **_kwargs: io.BytesIO(b"valid nonempty mp4 bytes")):
+            video_export._finish(self.store, self.project["id"], export_task["id"], {"task_id": "export-remote", "status": "completed", "terminal": True, "export_url": "https://flova.example/final.mp4"})
+        restored = self.store.load(self.project["id"])
+        self.assertEqual(restored["tasks"][-1]["status"], "待审核")
+        self.assertEqual(len(restored["deliverables"]), 1)
+        self.assertEqual(video_export.deliverable_bytes(self.store, restored, restored["deliverables"][0]["id"]), b"valid nonempty mp4 bytes")
+        archive = backup.export_project(self.store, restored)
+        imported = backup.restore_project(self.store, archive)
+        self.assertEqual(video_export.deliverable_bytes(self.store, imported, imported["deliverables"][0]["id"]), b"valid nonempty mp4 bytes")
+        video_export.ACTIVE.discard(self.project["id"])
 
     def test_video_is_not_submitted_without_verified_flova_reference_upload(self):
         source = self.approved_project()
