@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import json
 import os
 from pathlib import Path
 
@@ -64,7 +65,7 @@ def master_quote(store, project, body):
     if group not in (1, 2) or view not in ("正面", "侧面", "背面") or not views:
         raise ValueError("请选择候选组、视角并填写 SeeAny 视角预设")
     source, _ = store.source_bytes(project, source_id)
-    if not source["mime"].startswith("image/"):
+    if not source["mime"].startswith("image/") or source.get("origin") == "SeeAny candidate":
         raise ValueError("三视图参考资料必须是图片")
     if any(t.get("kind") == "master" and t.get("candidate_group") == group and t.get("view_label") == view
            and t["status"] in ("远端运行中", "待核对", "待审核", "完成") for t in project["tasks"]):
@@ -86,6 +87,109 @@ def chat_quote(project, body):
     return {"provider": "DeepSeek", "input_snapshot": snapshot, "fingerprint": fingerprint(snapshot),
             "estimate": None, "currency": None, "pricing_source": "未核实，费用未知", "reliable": False,
             "requires_explicit_run": True}
+
+
+def facts_quote(project, body):
+    source = next((s for s in project["sources"] if s["id"] == body.get("source_id")), None)
+    if not source or not source.get("extracted_text", "").strip():
+        raise ValueError("此来源没有可提取文本，请人工查看原文件")
+    snapshot = {"source_id": source["id"], "source_sha256": source["sha256"], "text": source["extracted_text"]}
+    return {"provider": "DeepSeek", "input_snapshot": snapshot, "fingerprint": fingerprint(snapshot),
+            "estimate": None, "currency": None, "pricing_source": "未核实，费用未知", "reliable": False,
+            "requires_explicit_run": True}
+
+
+def directions_quote(project):
+    if not project["brief_versions"] or not project["master_versions"]:
+        raise ValueError("请先确认产品简报与三视图母版")
+    brief = project["brief_versions"][-1]
+    master = project["master_versions"][-1]
+    snapshot = {"brief_id": brief["id"], "master_id": master["id"],
+                "facts": [{"field": f["field"], "value": f["value"]} for f in brief["facts"]]}
+    return {"provider": "DeepSeek", "input_snapshot": snapshot, "fingerprint": fingerprint(snapshot),
+            "estimate": None, "currency": None, "pricing_source": "未核实，费用未知", "reliable": False,
+            "requires_explicit_run": True}
+
+
+def run_directions(store, project, body):
+    existing = next((t for t in project["tasks"] if t["idempotency_key"] == body.get("request_id")), None)
+    if existing:
+        return existing
+    offer = directions_quote(project)
+    if body.get("approved_fingerprint") != offer["fingerprint"]:
+        raise ValueError("简报或母版已变化，请重新查看输入")
+    request_id = body.get("request_id")
+    if not isinstance(request_id, str) or len(request_id) < 8 or len(request_id) > 120:
+        raise ValueError("请提供请求标识以避免重复提交")
+    key = provider_key("DEEPSEEK_API_KEY")
+    if not key:
+        raise ValueError("缺少 DeepSeek API Key")
+    snapshot = offer["input_snapshot"]
+    task = {"id": ident(), "kind": "directions", "provider": "DeepSeek", "status": "远端运行中",
+            "idempotency_key": request_id, "input_snapshot": snapshot, "estimate": None, "actual": None,
+            "currency": None, "remote_id": None, "attempts": 1, "created": stamp(), "updated": stamp()}
+    project["tasks"].append(task)
+    store.save(project)
+    try:
+        messages = [{"role": "system", "content": "你是小家电广告策划。只返回 JSON 对象：{\"directions\":[{\"title\":\"\",\"audience\":\"\",\"opening\":\"\",\"selling_point\":\"\",\"ending\":\"\"}]}。恰好三个明显不同的方向，卖点仅依据已确认事实，不杜撰规格。"},
+                    {"role": "user", "content": json.dumps(snapshot["facts"], ensure_ascii=False)}]
+        result = deepseek_complete(key, messages, json_mode=True)
+        items = json.loads(result["text"]).get("directions")
+        if not isinstance(items, list) or len(items) != 3 or any(not isinstance(item, dict) or any(not str(item.get(field) or "").strip() for field in ("title", "audience", "opening", "selling_point", "ending")) for item in items):
+            raise ValueError("DeepSeek 未返回三个完整广告方向")
+        directions = [{"id": ident(), "brief_id": snapshot["brief_id"], "master_id": snapshot["master_id"],
+                       **{field: str(item[field]).strip() for field in ("title", "audience", "opening", "selling_point", "ending")},
+                       "created": stamp()} for item in items]
+        project["directions"].extend(directions)
+        task.update(status="待审核", remote_id=result["id"], result={"direction_ids": [d["id"] for d in directions], "usage": result["usage"]})
+    except Exception as exc:
+        task.update(status="待核对", error=str(exc)[:300])
+        store.save(project)
+        raise ValueError(task["error"] + "；如远端可能已受理，请先核对，勿重复提交") from exc
+    task["updated"] = stamp()
+    store.save(project)
+    return task
+
+
+def run_facts(store, project, body):
+    existing = next((t for t in project["tasks"] if t["idempotency_key"] == body.get("request_id")), None)
+    if existing:
+        return existing
+    offer = facts_quote(project, body)
+    if body.get("approved_fingerprint") != offer["fingerprint"]:
+        raise ValueError("来源文件已变化，请重新查看输入")
+    request_id = body.get("request_id")
+    if not isinstance(request_id, str) or len(request_id) < 8 or len(request_id) > 120:
+        raise ValueError("请提供请求标识以避免重复提交")
+    key = provider_key("DEEPSEEK_API_KEY")
+    if not key:
+        raise ValueError("缺少 DeepSeek API Key")
+    snapshot = offer["input_snapshot"]
+    task = {"id": ident(), "kind": "facts", "provider": "DeepSeek", "status": "远端运行中",
+            "idempotency_key": request_id, "input_snapshot": {k: v for k, v in snapshot.items() if k != "text"},
+            "estimate": None, "actual": None, "currency": None, "remote_id": None,
+            "attempts": 1, "created": stamp(), "updated": stamp()}
+    project["tasks"].append(task)
+    store.save(project)
+    try:
+        messages = [{"role": "system", "content": "从商品资料提取可由原文支持的候选信息。只返回 JSON 对象：{\"facts\":[{\"field\":\"字段\",\"value\":\"内容\"}]}。不得把推断写成事实。"},
+                    {"role": "user", "content": snapshot["text"]}]
+        result = deepseek_complete(key, messages, json_mode=True)
+        parsed = json.loads(result["text"])
+        items = parsed.get("facts")
+        if not isinstance(items, list):
+            raise ValueError("DeepSeek 未返回可用候选事实")
+        for item in items[:30]:
+            if isinstance(item, dict) and str(item.get("field") or "").strip() and str(item.get("value") or "").strip():
+                store.add_fact(project, str(item["field"])[:80], str(item["value"])[:500], snapshot["source_id"], "待核实")
+        task.update(status="待审核", remote_id=result["id"], result={"candidate_count": len(items), "usage": result["usage"]})
+    except Exception as exc:
+        task.update(status="待核对", error=str(exc)[:300])
+        store.save(project)
+        raise ValueError(task["error"] + "；如远端可能已受理，请先核对，勿重复提交") from exc
+    task["updated"] = stamp()
+    store.save(project)
+    return task
 
 
 def run_chat(store, project, body):
@@ -330,6 +434,7 @@ def sync(store, project, task_id):
                 if task.get("kind") == "master":
                     source["candidate_group"] = task["candidate_group"]
                     source["view_label"] = task["view_label"]
+                    source["brief_id"] = task["input_snapshot"]["brief_id"]
                     source["reference_ids"] = [task["input_snapshot"]["source_id"]]
                 elif task.get("kind") == "preview":
                     source["reference_ids"] = [task["source_id"]]

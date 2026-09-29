@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from commerce_studio.core import Store
 from commerce_studio import service
+from commerce_studio import flova_flow
 
 
 class CommerceStudioTests(unittest.TestCase):
@@ -24,7 +25,7 @@ class CommerceStudioTests(unittest.TestCase):
         candidates = []
         for view in ("正面", "侧面", "背面"):
             candidate = self.store.add_source(self.project, view + ".png", "image/png", base64.b64encode(view.encode()).decode())
-            candidate.update(origin="SeeAny candidate", candidate_group=1, view_label=view)
+            candidate.update(origin="SeeAny candidate", candidate_group=1, view_label=view, brief_id=self.project["brief_versions"][-1]["id"])
             candidates.append(candidate["id"])
         self.store.save(self.project)
         self.store.confirm_master(self.project, candidates)
@@ -35,6 +36,21 @@ class CommerceStudioTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "已知事实"):
             self.store.confirm_brief(self.project, [fact["id"]])
         self.assertEqual(self.project["brief_versions"], [])
+
+    def test_deepseek_extraction_is_reviewed_before_brief(self):
+        source = self.store.add_source(self.project, "merchant.txt", "text/plain", base64.b64encode("杯体为白色".encode()).decode())
+        offer = service.facts_quote(self.project, {"source_id": source["id"]})
+        response = {"id": "remote", "text": '{"facts":[{"field":"颜色","value":"白色"}]}', "usage": {}}
+        with patch.object(service, "provider_key", return_value="test-key"), patch.object(service, "deepseek_complete", return_value=response):
+            service.run_facts(self.store, self.project, {"source_id": source["id"], "approved_fingerprint": offer["fingerprint"], "request_id": "facts-request-123"})
+        fact = self.project["facts"][0]
+        self.assertEqual(fact["status"], "待核实")
+        self.assertEqual(fact["source_id"], source["id"])
+        with self.assertRaisesRegex(ValueError, "已知事实"):
+            self.store.confirm_brief(self.project, [fact["id"]])
+        self.store.review_fact(self.project, fact["id"], "已知事实")
+        version = self.store.confirm_brief(self.project, [fact["id"]])
+        self.assertEqual(version["facts"][0]["value"], "白色")
 
     def test_raw_photo_cannot_be_approved_as_complete_master(self):
         source = self.store.add_source(self.project, "front.png", "image/png", base64.b64encode(b"photo").decode())
@@ -63,6 +79,7 @@ class CommerceStudioTests(unittest.TestCase):
         download.assert_called_once()
         candidate = next(s for s in self.project["sources"] if s["id"] == task["asset_ids"][0])
         self.assertEqual(candidate["view_label"], "正面")
+        self.assertEqual(candidate["brief_id"], self.project["brief_versions"][-1]["id"])
         self.assertEqual(candidate["reference_ids"], [original["id"]])
 
     def test_typed_edges_only_change_graph_and_quote_uses_approved_versions(self):
@@ -108,6 +125,68 @@ class CommerceStudioTests(unittest.TestCase):
         self.assertNotIn("未知数值", messages[0]["content"])
         self.assertEqual(len(self.project["facts"]), 2)
         self.assertEqual(self.project["chat"][0]["reply"], "方向草稿")
+
+    def test_three_directions_and_storyboard_require_stepwise_approval(self):
+        self.approved_project()
+        offer = service.directions_quote(self.project)
+        directions = [{"title": str(i), "audience": "年轻人", "opening": "开头", "selling_point": "白色外观", "ending": "结尾"} for i in range(3)]
+        with patch.object(service, "provider_key", return_value="test-key"), patch.object(service, "deepseek_complete", return_value={"id": "remote", "text": __import__("json").dumps({"directions": directions}), "usage": {}}):
+            service.run_directions(self.store, self.project, {"approved_fingerprint": offer["fingerprint"], "request_id": "directions-123"})
+        self.assertEqual(len(self.project["directions"]), 3)
+        direction = self.store.approve_direction(self.project, self.project["directions"][0]["id"])
+        script = self.store.add_script(self.project, "15 秒静音可理解脚本")
+        self.store.approve_script(self.project, script["id"])
+        master_id = self.project["master_versions"][-1]["asset_ids"][0]
+        draft = self.store.add_storyboard(self.project, [{"visual": "产品正面展示", "duration": 3, "reference_asset_id": master_id}])
+        self.store.approve_storyboard(self.project, draft["id"])
+        self.assertEqual(self.project["storyboard_approval"], draft["id"])
+        self.assertEqual(direction["brief_id"], self.project["brief_versions"][-1]["id"])
+        new_fact = self.store.add_fact(self.project, "用途", "加热", status="已知事实")
+        self.store.confirm_brief(self.project, [new_fact["id"]])
+        with self.assertRaisesRegex(ValueError, "上游版本已变化"):
+            self.store.add_script(self.project, "旧方向的新脚本")
+
+    def test_flova_run_uses_approved_storyboard_and_blocks_duplicate_round(self):
+        self.approved_project()
+        with self.assertRaisesRegex(ValueError, "批准完整分镜"):
+            flova_flow.quote(self.project)
+        self.project["directions"].append({"id": "direction-1", "brief_id": self.project["brief_versions"][-1]["id"], "master_id": self.project["master_versions"][-1]["id"]})
+        self.store.approve_direction(self.project, "direction-1")
+        script = self.store.add_script(self.project, "15 秒脚本")
+        self.store.approve_script(self.project, script["id"])
+        shot = {"visual": "产品正面", "duration": 3, "reference_asset_id": self.project["master_versions"][-1]["asset_ids"][0]}
+        storyboard = self.store.add_storyboard(self.project, [shot])
+        self.store.approve_storyboard(self.project, storyboard["id"])
+        with patch.object(flova_flow.flova, "create_project", return_value={"project_id": "remote-project", "project_url": "https://flova.tv/p/remote-project"}):
+            flova_flow.create_project(self.store, self.project)
+        offer = flova_flow.quote(self.project)
+        with patch.object(flova_flow.threading, "Thread") as thread:
+            task = flova_flow.run(self.store, self.project, {"approved_fingerprint": offer["fingerprint"], "request_id": "flova-request-123"})
+            self.assertEqual(flova_flow.run(self.store, self.project, {"approved_fingerprint": offer["fingerprint"], "request_id": "flova-request-123"})["id"], task["id"])
+            with self.assertRaisesRegex(ValueError, "尚未核对"):
+                flova_flow.run(self.store, self.project, {"approved_fingerprint": offer["fingerprint"], "request_id": "flova-request-456"})
+            thread.assert_called_once()
+        flova_flow.ACTIVE.discard(self.project["id"])
+
+    def test_flova_recovery_never_accepts_unrelated_current_run(self):
+        task = {"id": "local-task", "provider": "Flova", "status": "待核对", "remote_id": None,
+                "remote_started": "2026-09-29T00:00:00+00:00", "input_snapshot": {"flova_project_id": "remote-project"}}
+        self.project["tasks"].append(task)
+        with patch.object(flova_flow.flova, "recover", return_value={"terminal": True, "stream_chat_id": "older-run"}), patch.object(flova_flow.flova, "run_result") as detail:
+            recovered = flova_flow.recover(self.store, self.project, task["id"])
+        self.assertEqual(recovered["status"], "待核对")
+        self.assertIsNone(recovered["remote_id"])
+        self.assertEqual(recovered["recovery_candidate"]["stream_chat_id"], "older-run")
+        detail.assert_not_called()
+
+    def test_flova_recovery_uses_known_remote_id(self):
+        task = {"id": "local-task", "provider": "Flova", "status": "待核对", "remote_id": "this-run",
+                "input_snapshot": {"flova_project_id": "remote-project"}}
+        self.project["tasks"].append(task)
+        with patch.object(flova_flow.flova, "recover", return_value={"terminal": True, "stream_chat_id": "older-run"}), patch.object(flova_flow.flova, "run_result", return_value={"terminal": True, "stream_chat_id": "this-run", "pending_actions": []}) as detail:
+            recovered = flova_flow.recover(self.store, self.project, task["id"])
+        self.assertEqual(recovered["status"], "待审核")
+        detail.assert_called_once_with("remote-project", "this-run")
 
     def test_video_is_not_submitted_without_verified_flova_reference_upload(self):
         source = self.approved_project()

@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .core import Store
-from . import service
+from . import flova_flow, service
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -78,6 +78,8 @@ class Handler(BaseHTTPRequestHandler):
                     return STORE.add_source(project, body.get("name"), body.get("mime"), body.get("base64"))
                 if parts[3:] == ["facts"]:
                     return STORE.add_fact(project, body.get("field"), body.get("value"), body.get("source_id"), body.get("status", "待核实"))
+                if len(parts) == 6 and parts[3] == "facts" and parts[5] == "review":
+                    return STORE.review_fact(project, parts[4], body.get("status"))
                 if parts[3:] == ["briefs", "confirm"]:
                     return STORE.confirm_brief(project, body.get("fact_ids", []))
                 if parts[3:] == ["masters", "confirm"]:
@@ -90,10 +92,38 @@ class Handler(BaseHTTPRequestHandler):
                     return service.chat_quote(project, body)
                 if parts[3:] == ["chat", "run"]:
                     return service.run_chat(STORE, project, body)
+                if parts[3:] == ["facts", "quote"]:
+                    return service.facts_quote(project, body)
+                if parts[3:] == ["facts", "run"]:
+                    return service.run_facts(STORE, project, body)
                 if parts[3:] == ["preview", "quote"]:
                     return service.preview_quote(project, body)
                 if parts[3:] == ["preview", "run"]:
                     return service.run_preview(STORE, project, body)
+                if parts[3:] == ["directions", "quote"]:
+                    return service.directions_quote(project)
+                if parts[3:] == ["directions", "run"]:
+                    return service.run_directions(STORE, project, body)
+                if parts[3:] == ["directions", "approve"]:
+                    return STORE.approve_direction(project, body.get("direction_id"))
+                if parts[3:] == ["scripts"]:
+                    return STORE.add_script(project, body.get("text"))
+                if parts[3:] == ["scripts", "approve"]:
+                    return STORE.approve_script(project, body.get("script_id"))
+                if parts[3:] == ["storyboards"]:
+                    return STORE.add_storyboard(project, body.get("shots"))
+                if parts[3:] == ["storyboards", "approve"]:
+                    return STORE.approve_storyboard(project, body.get("storyboard_id"))
+                if parts[3:] == ["flova", "create"]:
+                    return flova_flow.create_project(STORE, project)
+                if parts[3:] == ["flova", "attach"]:
+                    return flova_flow.attach_project(STORE, project, body.get("project_id"))
+                if parts[3:] == ["flova", "quote"]:
+                    return flova_flow.quote(project)
+                if parts[3:] == ["flova", "run"]:
+                    return flova_flow.run(STORE, project, body)
+                if len(parts) == 6 and parts[3] == "flova" and parts[5] == "recover":
+                    return flova_flow.recover(STORE, project, parts[4])
                 if parts[3:] == ["nodes"]:
                     return STORE.add_node(project, body.get("kind"), body.get("data"))
                 if parts[3:] == ["edges"]:

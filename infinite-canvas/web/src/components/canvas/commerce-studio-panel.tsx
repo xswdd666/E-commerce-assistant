@@ -5,6 +5,8 @@ import localforage from "localforage";
 import { studioApi, type MasterRequest, type PreviewRequest, type StudioFact, type StudioProject, type StudioQuote } from "@/services/api/commerce-studio";
 import { buildNodeGenerationContext, hydrateNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import { CanvasNodeType } from "@/types/canvas";
+import { CommercePlanSection } from "@/components/canvas/commerce-plan-section";
+import { CommerceFlovaSection } from "@/components/canvas/commerce-flova-section";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
 type Props = { open: boolean; onClose: () => void; canvasId: string; title: string; nodes: CanvasNodeData[]; connections: CanvasConnection[]; selectedNodeId?: string; onInsertImage: (dataUrl: string, title: string) => Promise<void> };
@@ -30,6 +32,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
     const [previewRequest, setPreviewRequest] = useState<PreviewRequest | null>(null);
     const [previewRatio, setPreviewRatio] = useState("1:1");
     const [comparison, setComparison] = useState<{ original: string; generated: string } | null>(null);
+    const [factsOffer, setFactsOffer] = useState<{ sourceId: string; quote: StudioQuote } | null>(null);
 
     useEffect(() => { setPreviewQuote(null); setPreviewRequest(null); }, [nodes, connections, selectedNodeId, previewRatio]);
 
@@ -89,12 +92,13 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                     <>
                         <section>
                             <Typography.Title level={5}>原始资料</Typography.Title>
-                            <input type="file" accept="image/*,text/plain,application/pdf" disabled={busy} onChange={(event) => {
+                            <input type="file" accept="image/*,text/plain,application/pdf,.docx" disabled={busy} onChange={(event) => {
                                 const file = event.target.files?.[0];
                                 if (file) void act(() => studioApi.source(project.id, file));
                                 event.target.value = "";
                             }} />
-                            {project.sources.map((source) => <div key={source.id}><Typography.Text>{source.name}</Typography.Text> <Typography.Text type="secondary">{Math.round(source.bytes / 1024)} KB</Typography.Text></div>)}
+                            {project.sources.filter((source) => !source.origin).map((source) => <div key={source.id}><Typography.Text>{source.name}</Typography.Text> <Typography.Text type="secondary">{Math.round(source.bytes / 1024)} KB · {source.parse_status || "需人工查看"}</Typography.Text>{source.parse_status === "可提取文本" ? <Button type="link" disabled={busy} onClick={() => void act(async () => { setFactsOffer({ sourceId: source.id, quote: await studioApi.factsQuote(project.id, source.id) }); })}>提取候选事实</Button> : null}</div>)}
+                            {factsOffer ? <div><Typography.Text>DeepSeek 提取费用：{factsOffer.quote.estimate == null ? "未知" : factsOffer.quote.estimate}</Typography.Text><Button type="primary" className="ml-2" disabled={busy} onClick={() => void act(async () => { await studioApi.factsRun(project.id, factsOffer.sourceId, factsOffer.quote.fingerprint, crypto.randomUUID()); setFactsOffer(null); })}>确认提取</Button></div> : null}
                         </section>
                         <section>
                             <Typography.Title level={5}>产品事实</Typography.Title>
@@ -108,7 +112,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                                     setField(""); setValue("");
                                 })}>保存事实</Button>
                             </Space>
-                            {project.facts.map((fact) => <div key={fact.id} className="mt-2"><Tag>{fact.status}</Tag>{fact.field}：{fact.value}</div>)}
+                            {project.facts.map((fact) => <div key={fact.id} className="mt-2"><Tag>{fact.status}</Tag>{fact.field}：{fact.value}{fact.status === "待核实" ? <Space><Button type="link" disabled={busy} onClick={() => void act(() => studioApi.reviewFact(project.id, fact.id, "已知事实"))}>核实为事实</Button><Button type="link" disabled={busy} onClick={() => void act(() => studioApi.reviewFact(project.id, fact.id, "创意假设"))}>标为假设</Button></Space> : null}</div>)}
                             <Button className="mt-3" disabled={busy || !confirmed.length} onClick={() => void act(() => studioApi.brief(project.id, confirmed.map((fact) => fact.id)))}>确认简报新版本</Button>
                             <Typography.Text type="secondary" className="ml-2">已确认 {project.brief_versions.length} 版</Typography.Text>
                         </section>
@@ -129,9 +133,11 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                             <Typography.Title level={5}>三视图母版审核</Typography.Title>
                             <Typography.Paragraph type="secondary">仅确认整体创作参考；缺失视角的结构细节仍需单独核实。</Typography.Paragraph>
                             <Select mode="multiple" className="w-full" placeholder="选择同组正面、侧面、背面各一张" value={masterIds} onChange={setMasterIds} options={candidates.map((source) => ({ value: source.id, label: `第 ${source.candidate_group} 组 · ${source.view_label} · ${source.name}` }))} />
+                            {candidates.map((source) => <div key={source.id}>第 {source.candidate_group} 组 · {source.view_label} <Button type="link" onClick={() => void (async () => { try { const [original, generated] = await Promise.all([studioApi.sourceData(project.id, source.reference_ids?.[0] || ""), studioApi.sourceData(project.id, source.id)]); setComparison({ original: original.data_url, generated: generated.data_url }); } catch (cause) { setError(cause instanceof Error ? cause.message : "读取候选失败"); } })()}>对照查看</Button></div>)}
                             <Button className="mt-2" disabled={busy || masterIds.length !== 3} onClick={() => void act(() => studioApi.master(project.id, masterIds))}>确认母版新版本</Button>
                             <Typography.Text type="secondary" className="ml-2">已确认 {project.master_versions.length} 版</Typography.Text>
                             {project.master_versions.at(-1)?.asset_ids.map((id) => { const source = project.sources.find((item) => item.id === id); return source ? <div key={id}>{source.view_label} · {source.name} <Button type="link" disabled={busy} onClick={() => void (async () => { try { const asset = await studioApi.sourceData(project.id, id); await onInsertImage(asset.data_url, `母版${source.view_label}`); } catch (cause) { setError(cause instanceof Error ? cause.message : "加入画布失败"); } })()}>加入画布</Button></div> : null; })}
+                            {comparison ? <div className="mt-3 grid grid-cols-2 gap-2"><div><Typography.Text>参考图</Typography.Text><img src={comparison.original} alt="参考图" className="w-full" /></div><div><Typography.Text>候选图</Typography.Text><img src={comparison.generated} alt="候选图" className="w-full" /></div></div> : null}
                         </section>
                         <section>
                             <Typography.Title level={5}>创作聊天</Typography.Title>
@@ -144,6 +150,8 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                             {chatQuote ? <Typography.Paragraph className="mt-2">费用：{chatQuote.estimate == null ? "未知" : chatQuote.estimate}；简报版本：{String((chatQuote.input_snapshot as { brief_id?: string }).brief_id || "无").slice(0, 12)}</Typography.Paragraph> : null}
                             {project.chat.map((item) => <div key={item.id} className="mt-3"><Typography.Text strong>{item.prompt}</Typography.Text><Typography.Paragraph className="mt-1 whitespace-pre-wrap">{item.reply}</Typography.Paragraph></div>)}
                         </section>
+                        <CommercePlanSection project={project} busy={busy} act={act} />
+                        <CommerceFlovaSection project={project} busy={busy} act={act} />
                         <section>
                             <Typography.Title level={5}>画布输入</Typography.Title>
                             <Typography.Paragraph>{selected ? `当前节点：${selected.title || selected.type}` : "选择一个画布节点查看其输入依赖"}</Typography.Paragraph>
@@ -167,7 +175,6 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                             <Typography.Title level={5}>任务与费用</Typography.Title>
                             <Typography.Paragraph>任务 {project.tasks.length} 个；未核实价格显示“未知”。</Typography.Paragraph>
                             {project.tasks.filter((task) => task.kind === "preview").map((task) => <div key={task.id} className="mt-2"><Tag>{task.status}</Tag>画布试图 <Button type="link" disabled={busy} onClick={() => void act(() => studioApi.sync(project.id, task.id))}>同步状态</Button>{task.asset_ids?.length && task.source_id ? <Button type="link" onClick={() => void (async () => { try { const [original, generated] = await Promise.all([studioApi.sourceData(project.id, task.source_id!), studioApi.sourceData(project.id, task.asset_ids![0])]); setComparison({ original: original.data_url, generated: generated.data_url }); } catch (cause) { setError(cause instanceof Error ? cause.message : "读取图片失败"); } })()}>对照查看</Button> : null}</div>)}
-                            {comparison ? <div className="mt-3 grid grid-cols-2 gap-2"><div><Typography.Text>原始参考</Typography.Text><img src={comparison.original} alt="原始参考" className="w-full" /></div><div><Typography.Text>生成候选</Typography.Text><img src={comparison.generated} alt="生成候选" className="w-full" /></div></div> : null}
                         </section>
                     </>
                 )}

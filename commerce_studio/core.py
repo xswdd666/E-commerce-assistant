@@ -57,6 +57,8 @@ class Store:
             raise ValueError("请输入项目名称")
         project = {"id": ident(), "organization_id": "local", "name": name.strip(), "created": stamp(),
                    "updated": stamp(), "sources": [], "facts": [], "brief_versions": [], "master_versions": [],
+                   "directions": [], "direction_approval": None, "script_versions": [], "script_approval": None,
+                   "storyboard_versions": [], "storyboard_approval": None, "external": {"flova_project_id": "", "flova_project_url": ""},
                    "nodes": [], "edges": [], "tasks": [], "costs": [], "chat": []}
         self.save(project)
         return project
@@ -142,10 +144,21 @@ class Store:
         self.save(project)
         return fact
 
+    def review_fact(self, project, fact_id, status):
+        if status not in ("待核实", "已知事实", "创意假设"):
+            raise ValueError("事实状态无效")
+        fact = next((f for f in project["facts"] if f["id"] == fact_id), None)
+        if fact is None:
+            raise ValueError("候选事实不存在")
+        fact.setdefault("review_history", []).append({"from": fact["status"], "to": status, "at": stamp(), "reviewer": "local"})
+        fact["status"] = status
+        self.save(project)
+        return fact
+
     def add_source(self, project, name, mime, encoded):
         if not isinstance(name, str) or not name.strip() or len(name) > 200:
             raise ValueError("文件名无效")
-        if not isinstance(mime, str) or not (mime.startswith("image/") or mime in ("text/plain", "application/pdf")):
+        if not isinstance(mime, str) or not (mime.startswith("image/") or mime in ("text/plain", "application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")):
             raise ValueError("文件类型暂不支持")
         try:
             raw = base64.b64decode(encoded, validate=True)
@@ -157,8 +170,15 @@ class Store:
         directory = self.root / "files" / project["id"]
         directory.mkdir(parents=True, exist_ok=True)
         (directory / source_id).write_bytes(raw)
+        extracted = ""
+        if mime == "text/plain":
+            try:
+                extracted = raw.decode("utf-8-sig")[:12000]
+            except UnicodeDecodeError:
+                pass
         source = {"id": source_id, "name": name, "mime": mime, "sha256": hashlib.sha256(raw).hexdigest(),
-                  "bytes": len(raw), "created": stamp()}
+                  "bytes": len(raw), "created": stamp(),
+                  "extracted_text": extracted, "parse_status": "可提取文本" if extracted.strip() else "需人工查看"}
         project["sources"].append(source)
         self.save(project)
         return source
@@ -191,8 +211,73 @@ class Store:
             raise ValueError("母版只能使用已生成的三视图候选图")
         if {s.get("view_label") for s in chosen} != {"正面", "侧面", "背面"} or len({s.get("candidate_group") for s in chosen}) != 1:
             raise ValueError("三视图必须来自同一候选组，且覆盖正面、侧面和背面")
+        if any(s.get("brief_id") != project["brief_versions"][-1]["id"] for s in chosen):
+            raise ValueError("三视图候选须基于当前已确认简报")
         version = {"id": ident(), "brief_id": project["brief_versions"][-1]["id"],
                    "asset_ids": list(asset_ids), "inferred_details": copy.deepcopy(inferred_details or []), "created": stamp()}
         project["master_versions"].append(version)
         self.save(project)
         return version
+
+    def approve_direction(self, project, direction_id):
+        direction = next((d for d in project["directions"] if d["id"] == direction_id), None)
+        if not direction or direction["brief_id"] != project["brief_versions"][-1]["id"] or direction["master_id"] != project["master_versions"][-1]["id"]:
+            raise ValueError("广告方向不存在或上游版本已变化")
+        project["direction_approval"] = direction_id
+        self.save(project)
+        return direction
+
+    def add_script(self, project, text):
+        if not project["direction_approval"] or not isinstance(text, str) or not text.strip():
+            raise ValueError("请先选择广告方向并填写脚本")
+        direction = next((d for d in project["directions"] if d["id"] == project["direction_approval"]), None)
+        if not direction or direction["brief_id"] != project["brief_versions"][-1]["id"] or direction["master_id"] != project["master_versions"][-1]["id"]:
+            raise ValueError("广告方向的上游版本已变化，请重新选择")
+        version = {"id": ident(), "direction_id": project["direction_approval"], "brief_id": project["brief_versions"][-1]["id"],
+                   "master_id": project["master_versions"][-1]["id"], "text": text.strip(), "created": stamp()}
+        project["script_versions"].append(version)
+        self.save(project)
+        return version
+
+    def approve_script(self, project, script_id):
+        script = next((s for s in project["script_versions"] if s["id"] == script_id), None)
+        if not script or script["direction_id"] != project["direction_approval"] or script["brief_id"] != project["brief_versions"][-1]["id"] or script["master_id"] != project["master_versions"][-1]["id"]:
+            raise ValueError("脚本不存在或上游版本已变化")
+        project["script_approval"] = script_id
+        self.save(project)
+        return script
+
+    def add_storyboard(self, project, shots):
+        if not project["script_approval"] or not isinstance(shots, list) or not shots:
+            raise ValueError("请先批准脚本并填写分镜")
+        script = next((s for s in project["script_versions"] if s["id"] == project["script_approval"]), None)
+        if not script or script["brief_id"] != project["brief_versions"][-1]["id"] or script["master_id"] != project["master_versions"][-1]["id"]:
+            raise ValueError("脚本的上游版本已变化，请重新批准")
+        cleaned = []
+        for shot in shots:
+            if not isinstance(shot, dict) or not str(shot.get("visual") or "").strip():
+                raise ValueError("分镜缺少画面描述")
+            try:
+                duration = float(shot["duration"])
+            except (KeyError, ValueError, TypeError) as exc:
+                raise ValueError("分镜时长无效") from exc
+            if not 0.5 <= duration <= 15:
+                raise ValueError("单镜时长须在 0.5 至 15 秒之间")
+            cleaned.append({"id": ident(), "visual": str(shot["visual"]).strip(), "duration": duration,
+                            "reference_asset_id": shot.get("reference_asset_id"), "caption": str(shot.get("caption") or "")})
+        version = {"id": ident(), "script_id": project["script_approval"], "master_id": project["master_versions"][-1]["id"],
+                   "shots": cleaned, "created": stamp()}
+        project["storyboard_versions"].append(version)
+        self.save(project)
+        return version
+
+    def approve_storyboard(self, project, storyboard_id):
+        storyboard = next((s for s in project["storyboard_versions"] if s["id"] == storyboard_id), None)
+        if not storyboard or storyboard["script_id"] != project["script_approval"] or storyboard["master_id"] != project["master_versions"][-1]["id"]:
+            raise ValueError("分镜不存在或上游版本已变化")
+        approved_assets = set(project["master_versions"][-1]["asset_ids"])
+        if any(shot["reference_asset_id"] not in approved_assets for shot in storyboard["shots"]):
+            raise ValueError("每个镜头必须引用当前已确认母版素材")
+        project["storyboard_approval"] = storyboard_id
+        self.save(project)
+        return storyboard
