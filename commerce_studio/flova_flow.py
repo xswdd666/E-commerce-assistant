@@ -179,7 +179,10 @@ def _run_worker(store, project_id, task_id):
 
 
 def run(store, project, body):
-    existing = next((t for t in project["tasks"] if t["idempotency_key"] == body.get("request_id")), None)
+    request_id = body.get("request_id")
+    if not isinstance(request_id, str) or len(request_id) < 8 or len(request_id) > 120:
+        raise ValueError("请提供请求标识以避免重复提交")
+    existing = next((t for t in project["tasks"] if t.get("idempotency_key") == request_id), None)
     if existing:
         return existing
     offer = quote(project)
@@ -187,9 +190,6 @@ def run(store, project, body):
         raise ValueError("当前分镜已开始逐镜制作，请完成逐镜审核")
     if body.get("approved_fingerprint") != offer["fingerprint"]:
         raise ValueError("分镜输入已变化，请重新查看快照")
-    request_id = body.get("request_id")
-    if not isinstance(request_id, str) or len(request_id) < 8 or len(request_id) > 120:
-        raise ValueError("请提供请求标识以避免重复提交")
     if any(t["provider"] == "Flova" and t["status"] in ("已排队", "上传素材", "远端运行中", "待核对", "待用户确认") for t in project["tasks"]):
         raise ValueError("上次 Flova 运行尚未核对，请先恢复状态")
     with ACTIVE_LOCK:

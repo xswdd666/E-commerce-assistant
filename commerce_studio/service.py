@@ -29,6 +29,12 @@ def provider_key(name):
     return ""
 
 
+def _existing_request(project, request_id):
+    if not isinstance(request_id, str) or not 8 <= len(request_id) <= 120:
+        return None
+    return next((task for task in project["tasks"] if task.get("idempotency_key") == request_id), None)
+
+
 def quote(store, project, node_id):
     snap = store.snapshot(project, node_id)
     inputs = snap["inputs"]
@@ -116,7 +122,7 @@ def directions_quote(project):
 
 
 def run_directions(store, project, body):
-    existing = next((t for t in project["tasks"] if t["idempotency_key"] == body.get("request_id")), None)
+    existing = _existing_request(project, body.get("request_id"))
     if existing:
         return existing
     offer = directions_quote(project)
@@ -156,7 +162,7 @@ def run_directions(store, project, body):
 
 
 def run_facts(store, project, body):
-    existing = next((t for t in project["tasks"] if t["idempotency_key"] == body.get("request_id")), None)
+    existing = _existing_request(project, body.get("request_id"))
     if existing:
         return existing
     offer = facts_quote(project, body)
@@ -203,7 +209,7 @@ def run_facts(store, project, body):
 
 
 def run_chat(store, project, body):
-    existing = next((t for t in project["tasks"] if t["idempotency_key"] == body.get("request_id")), None)
+    existing = _existing_request(project, body.get("request_id"))
     if existing:
         return existing
     offer = chat_quote(project, body)
@@ -281,7 +287,7 @@ def preview_quote(project, body):
 
 
 def run_preview(store, project, body):
-    existing = next((t for t in project["tasks"] if t["idempotency_key"] == body.get("request_id")), None)
+    existing = _existing_request(project, body.get("request_id"))
     if existing:
         return existing
     offer = preview_quote(project, body)
@@ -348,7 +354,7 @@ def review_canvas_preview(store, project, task_id, source_id, decision, reason="
 
 
 def run_master(store, project, body):
-    existing = next((t for t in project["tasks"] if t["idempotency_key"] == body.get("request_id")), None)
+    existing = _existing_request(project, body.get("request_id"))
     if existing:
         return existing
     offer = master_quote(store, project, body)
@@ -395,7 +401,7 @@ def run(store, project, node_id, body):
     request_id = body.get("request_id")
     if not isinstance(request_id, str) or len(request_id) < 8 or len(request_id) > 120:
         raise ValueError("请提供请求标识以避免重复提交")
-    existing = next((t for t in project["tasks"] if t["idempotency_key"] == request_id), None)
+    existing = _existing_request(project, request_id)
     if existing:
         return existing
     snap = offer["input_snapshot"]

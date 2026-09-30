@@ -258,6 +258,9 @@ class CommerceStudioTests(unittest.TestCase):
 
     def test_three_directions_and_storyboard_require_stepwise_approval(self):
         self.approved_project()
+        self.project["tasks"].append({"id": "old-task", "provider": "DeepSeek", "status": "完成"})
+        with self.assertRaisesRegex(ValueError, "请求标识"):
+            service.run_directions(self.store, self.project, {"approved_fingerprint": service.directions_quote(self.project)["fingerprint"]})
         offer = service.directions_quote(self.project)
         directions = [{"title": str(i), "audience": "年轻人", "opening": "开头", "selling_point": "白色外观", "ending": "结尾"} for i in range(3)]
         with patch.object(service, "provider_key", return_value="test-key"), patch.object(service, "deepseek_complete", return_value={"id": "remote", "text": __import__("json").dumps({"directions": directions}), "usage": {}}):
@@ -335,6 +338,9 @@ class CommerceStudioTests(unittest.TestCase):
         with patch.object(flova_flow.flova, "create_project", return_value={"project_id": "remote-project", "project_url": "https://flova.tv/p/remote-project"}):
             flova_flow.create_project(self.store, self.project)
         offer = flova_flow.quote(self.project)
+        self.project["tasks"].append({"id": "old-task", "provider": "DeepSeek", "status": "完成"})
+        with self.assertRaisesRegex(ValueError, "请求标识"):
+            flova_flow.run(self.store, self.project, {"approved_fingerprint": offer["fingerprint"]})
         with patch.object(flova_flow.threading, "Thread") as thread:
             task = flova_flow.run(self.store, self.project, {"approved_fingerprint": offer["fingerprint"], "request_id": "flova-request-123"})
             self.assertEqual(flova_flow.run(self.store, self.project, {"approved_fingerprint": offer["fingerprint"], "request_id": "flova-request-123"})["id"], task["id"])
