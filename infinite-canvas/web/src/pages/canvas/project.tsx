@@ -4,6 +4,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Group, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
+import localforage from "localforage";
 
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
@@ -75,6 +76,8 @@ import { CanvasPluginManagerModal } from "@/components/canvas/canvas-plugin-mana
 import { CanvasRefreshShell } from "@/components/canvas/canvas-refresh-shell";
 import { CanvasTopBar } from "@/components/canvas/canvas-top-bar";
 import { CommerceStudioPanel } from "@/components/canvas/commerce-studio-panel";
+import { studioApi, type StudioProject } from "@/services/api/commerce-studio";
+import { hiddenCommerceBranchNodeIds, type CommerceBranchState } from "@/lib/canvas/commerce-branches";
 import { ConnectionCreateMenu, NodeCreateMenu, type PendingConnectionCreate } from "@/components/canvas/canvas-create-menus";
 import {
     CanvasNodeType,
@@ -132,6 +135,10 @@ const NODE_STATUS_IDLE = "idle" as const;
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
+
+function commerceBranchFromProject(project: StudioProject | null): CommerceBranchState | null {
+    return project ? { projectId: project.id, versions: project.prompt_versions, adoption: project.prompt_adoption } : null;
+}
 
 function applyGeneratedVideo(item: CanvasNodeData, video: UploadedFile, extra: CanvasNodeData["metadata"] = {}): CanvasNodeData {
     const videoSize = fitNodeSize(video.width || item.width, video.height || item.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
@@ -240,6 +247,8 @@ function InfiniteCanvasPage() {
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [commerceOpen, setCommerceOpen] = useState(false);
+    const [commerceBranch, setCommerceBranch] = useState<CommerceBranchState | null>(null);
+    const [showCommerceBranches, setShowCommerceBranches] = useState(false);
     const [projectLoaded, setProjectLoaded] = useState(false);
     const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
     const [nodeImageSettingsOpen, setNodeImageSettingsOpen] = useState(false);
@@ -275,6 +284,28 @@ function InfiniteCanvasPage() {
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
     const generationRequestsRef = useRef(new Map<string, CanvasGenerationRequest>());
     const videoPollIdsRef = useRef(new Set<string>());
+
+    useEffect(() => {
+        let active = true;
+        setCommerceBranch(null);
+        setShowCommerceBranches(false);
+        void (async () => {
+            try {
+                const id = await localforage.getItem<string>(`commerce-studio:${projectId}`);
+                const project = id ? await studioApi.get(id) : null;
+                if (active) setCommerceBranch(commerceBranchFromProject(project));
+            } catch {
+                if (active) setCommerceBranch(null);
+            }
+        })();
+        return () => { active = false; };
+    }, [projectId]);
+
+    const handleCommerceProjectChange = useCallback((project: StudioProject) => {
+        setCommerceBranch(commerceBranchFromProject(project));
+    }, []);
+
+    useEffect(() => { setShowCommerceBranches(false); }, [commerceBranch?.adoption?.source_id]);
 
     const createHistoryEntry = useCallback(
         (): CanvasHistoryEntry => ({
@@ -693,9 +724,18 @@ function InfiniteCanvasPage() {
         // `nodes` keeps the container rect re-read on node changes, matching the previous behaviour when the container resizes without a size update.
     }, [nodes, size.height, size.width, viewport.k, viewport.x, viewport.y]);
 
+    const hiddenCommerceNodes = useMemo(() => hiddenCommerceBranchNodeIds(nodes, connections, commerceBranch), [nodes, connections, commerceBranch]);
+    useEffect(() => {
+        if (showCommerceBranches || !hiddenCommerceNodes.size) return;
+        setSelectedNodeIds((current) => {
+            const visible = [...current].filter((id) => !hiddenCommerceNodes.has(id));
+            return visible.length === current.size ? current : new Set(visible);
+        });
+    }, [hiddenCommerceNodes, showCommerceBranches]);
+    const mainlineNodes = useMemo(() => nodes.filter((node) => showCommerceBranches || !hiddenCommerceNodes.has(node.id)), [nodes, hiddenCommerceNodes, showCommerceBranches]);
     const visibleNodes = useMemo(
-        () => nodes.filter((node) => node.position.x + node.width > viewBounds.left && node.position.x < viewBounds.right && node.position.y + node.height > viewBounds.top && node.position.y < viewBounds.bottom),
-        [nodes, viewBounds],
+        () => mainlineNodes.filter((node) => node.position.x + node.width > viewBounds.left && node.position.x < viewBounds.right && node.position.y + node.height > viewBounds.top && node.position.y < viewBounds.bottom),
+        [mainlineNodes, viewBounds],
     );
 
     const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
@@ -707,6 +747,7 @@ function InfiniteCanvasPage() {
                 const from = nodeById.get(connection.fromNodeId);
                 const to = nodeById.get(connection.toNodeId);
                 if (!from || !to) return [];
+                if (!showCommerceBranches && (hiddenCommerceNodes.has(from.id) || hiddenCommerceNodes.has(to.id))) return [];
                 const startX = from.position.x + from.width;
                 const startY = from.position.y + from.height / 2;
                 const endX = to.position.x;
@@ -716,7 +757,7 @@ function InfiniteCanvasPage() {
                     Math.max(startX + curvature, endX) > viewBounds.left && Math.min(startX, endX - curvature) < viewBounds.right && Math.max(startY, endY) > viewBounds.top && Math.min(startY, endY) < viewBounds.bottom;
                 return inView ? [{ connection, from, to }] : [];
             }),
-        [connections, nodeById, viewBounds],
+        [connections, nodeById, viewBounds, hiddenCommerceNodes, showCommerceBranches],
     );
     // The toolbar follows a single selected node selected by click, creation, marquee, or keyboard.
     // It stays hidden for multi-selection and while isNodeDragging is true.
@@ -2960,19 +3001,24 @@ function InfiniteCanvasPage() {
                 position: { x: center.x - config.width / 2, y: center.y - config.height / 2 },
                 width: config.width,
                 height: config.height,
-                metadata: { ...imageMetadata({ ...storedImage, width: meta.width, height: meta.height }), prompt: image.prompt, commerceImage: image.commerceImage ? { ...image.commerceImage, originalStorageKey: storedImage.storageKey } : undefined },
+                metadata: { ...imageMetadata({ ...storedImage, width: meta.width, height: meta.height }), prompt: image.prompt, commerceImage: image.commerceImage ? { ...image.commerceImage, originalStorageKey: storedImage.storageKey } : undefined, commercePromptImage: image.commercePromptImage ? { ...image.commercePromptImage, originalStorageKey: storedImage.storageKey } : undefined },
             };
 
             setNodes((prev) => [...prev, node]);
+            if (image.commercePromptImage) {
+                const promptNode = nodesRef.current.find((item) => item.metadata?.commerceSource?.kind === "prompt" && item.metadata.commerceSource.projectId === image.commercePromptImage?.projectId && item.metadata.commerceSource.versionId === image.commercePromptImage?.versionId);
+                if (promptNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: promptNode.id, toNodeId: id }]);
+                if (commerceBranch?.adoption && commerceBranch.adoption.source_id !== image.commercePromptImage.sourceId) setShowCommerceBranches(true);
+            }
             setSelectedNodeIds(new Set([id]));
             setSelectedConnectionId(null);
             setDialogNodeId(id);
         },
-        [screenToCanvas, size.height, size.width],
+        [commerceBranch, screenToCanvas, size.height, size.width],
     );
 
     const insertAssistantText = useCallback(
-        (text: string, title?: string, source?: { projectId: string; kind: "script" | "storyboard"; versionId: string }) => {
+        (text: string, title?: string, source?: { projectId: string; kind: "script" | "storyboard" | "prompt"; versionId: string; parentVersionId?: string | null }) => {
             const center = screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
             const node = {
                 ...createCanvasNode(CanvasNodeType.Text, center, { content: text, status: NODE_STATUS_SUCCESS }),
@@ -2981,6 +3027,15 @@ function InfiniteCanvasPage() {
             if (source) node.metadata = { ...node.metadata, commerceSource: { ...source, originalText: text } };
 
             setNodes((prev) => [...prev, node]);
+            if (source?.kind === "prompt" && source.parentVersionId) {
+                const parent = nodesRef.current.find((item) => item.metadata?.commerceSource?.kind === "prompt" && item.metadata.commerceSource.projectId === source.projectId && item.metadata.commerceSource.versionId === source.parentVersionId);
+                if (parent) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: parent.id, toNodeId: node.id }]);
+            }
+            if (source?.kind === "prompt") {
+                const children = nodesRef.current.filter((item) => item.metadata?.commerceSource?.kind === "prompt" && item.metadata.commerceSource.projectId === source.projectId && item.metadata.commerceSource.parentVersionId === source.versionId);
+                const images = nodesRef.current.filter((item) => item.metadata?.commercePromptImage?.projectId === source.projectId && item.metadata.commercePromptImage.versionId === source.versionId);
+                if (children.length || images.length) setConnections((prev) => [...prev, ...children.map((item) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: item.id })), ...images.map((item) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: item.id }))]);
+            }
             setSelectedNodeIds(new Set([node.id]));
             setSelectedConnectionId(null);
         },
@@ -3111,7 +3166,7 @@ function InfiniteCanvasPage() {
 
     return (
         <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
-            <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onInsertAsset={handleAssetInsert} />
+            <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={(nodeId) => { if (hiddenCommerceNodes.has(nodeId)) setShowCommerceBranches(true); focusNode(nodeId); }} onPreviewNode={setPreviewNodeId} onInsertAsset={handleAssetInsert} />
             <section className="relative min-w-0 flex-1 overflow-hidden">
                 <CanvasTopBar
                     title={currentProject?.title || t("canvas.projectPage.untitledCanvas")}
@@ -3138,6 +3193,7 @@ function InfiniteCanvasPage() {
                 />
 
                 <Button type="text" className="absolute right-5 top-14 z-[80]" onClick={() => setCommerceOpen(true)}>广告电商工作台</Button>
+                {hiddenCommerceNodes.size ? <Button type="text" className="absolute right-5 top-24 z-[80]" onClick={() => { if (showCommerceBranches) setSelectedNodeIds((current) => new Set([...current].filter((id) => !hiddenCommerceNodes.has(id)))); setShowCommerceBranches((value) => !value); }}>{showCommerceBranches ? "只看当前采用主线" : `展开未采用分支（${hiddenCommerceNodes.size}）`}</Button> : null}
                 <CommerceStudioPanel
                     open={commerceOpen}
                     onClose={() => setCommerceOpen(false)}
@@ -3146,7 +3202,8 @@ function InfiniteCanvasPage() {
                     nodes={nodes}
                     connections={connections}
                     selectedNodeId={[...selectedNodeIds][0]}
-                    onInsertImage={(dataUrl, title, commerceImage) => insertAssistantImage({ id: nanoid(), prompt: title, dataUrl, commerceImage })}
+                    onProjectChange={handleCommerceProjectChange}
+                    onInsertImage={(dataUrl, title, commerceImage, commercePromptImage) => insertAssistantImage({ id: nanoid(), prompt: title, dataUrl, commerceImage, commercePromptImage })}
                     onInsertText={insertAssistantText}
                     onInsertVideo={async (blob, title, projectId, deliverableId) => {
                         const media = await uploadMediaFile(blob, "video");
@@ -3335,7 +3392,7 @@ function InfiniteCanvasPage() {
                     onShowImageInfoChange={setShowImageInfo}
                 />
 
-                {isMiniMapOpen ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
+                {isMiniMapOpen ? <Minimap nodes={mainlineNodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
 
                 <CanvasZoomControls scale={viewport.k} onScaleChange={setZoomScale} onReset={resetViewport} isMiniMapOpen={isMiniMapOpen} onToggleMiniMap={() => setIsMiniMapOpen((value) => !value)} />
 

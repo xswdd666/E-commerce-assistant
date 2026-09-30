@@ -19,9 +19,9 @@ import { createZip } from "@/lib/zip";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
-type Props = { open: boolean; onClose: () => void; canvasId: string; title: string; nodes: CanvasNodeData[]; connections: CanvasConnection[]; selectedNodeId?: string; onInsertImage: (dataUrl: string, title: string, commerceImage?: { projectId: string; sourceId: string; masterVersionId: string }) => Promise<void>; onInsertText: (text: string, title: string, source?: { projectId: string; kind: "script" | "storyboard"; versionId: string }) => void; onInsertVideo: (blob: Blob, title: string, projectId: string, deliverableId: string) => Promise<void> };
+type Props = { open: boolean; onClose: () => void; canvasId: string; title: string; nodes: CanvasNodeData[]; connections: CanvasConnection[]; selectedNodeId?: string; onProjectChange: (project: StudioProject) => void; onInsertImage: (dataUrl: string, title: string, commerceImage?: { projectId: string; sourceId: string; masterVersionId: string }, commercePromptImage?: { projectId: string; sourceId: string; versionId: string }) => Promise<void>; onInsertText: (text: string, title: string, source?: { projectId: string; kind: "script" | "storyboard" | "prompt"; versionId: string; parentVersionId?: string | null }) => void; onInsertVideo: (blob: Blob, title: string, projectId: string, deliverableId: string) => Promise<void> };
 
-export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, connections, selectedNodeId, onInsertImage, onInsertText, onInsertVideo }: Props) {
+export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, connections, selectedNodeId, onProjectChange, onInsertImage, onInsertText, onInsertVideo }: Props) {
     const [project, setProject] = useState<StudioProject | null>(null);
     const [legacyProjects, setLegacyProjects] = useState<Array<{ id: string; name: string; sources: number; facts: number }>>([]);
     const [legacyId, setLegacyId] = useState<string>();
@@ -53,6 +53,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
     const [resolutionNote, setResolutionNote] = useState("");
 
     useEffect(() => { setPreviewQuote(null); setPreviewRequest(null); }, [nodes, connections, selectedNodeId, previewRatio]);
+    useEffect(() => { if (project) onProjectChange(project); }, [project, onProjectChange]);
 
     useEffect(() => {
         if (!open) return;
@@ -87,9 +88,11 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
     const selectedSource = selected?.metadata?.commerceSource;
     const selectedAsset = selected?.metadata?.commerceAsset;
     const selectedImage = selected?.metadata?.commerceImage;
+    const selectedPromptImage = selected?.metadata?.commercePromptImage;
     const selectedImageSource = project?.sources.find((item) => item.id === selectedImage?.sourceId);
     const selectedSourceCurrent = Boolean(project && selectedSource && selectedSource.projectId === project.id && selectedSource.originalText === selected?.metadata?.content &&
-        (selectedSource.kind === "script" ? selectedSource.versionId === project.script_approval : selectedSource.versionId === project.storyboard_approval));
+        (selectedSource.kind === "script" ? selectedSource.versionId === project.script_approval : selectedSource.kind === "storyboard" ? selectedSource.versionId === project.storyboard_approval :
+            project.prompt_versions.some((version) => version.id === selectedSource.versionId && version.text === selectedSource.originalText && version.brief_id === project.brief_versions.at(-1)?.id && version.master_id === project.master_versions.at(-1)?.id)));
     const inputs = connections.filter((connection) => connection.toNodeId === selectedNodeId).map((connection) => nodes.find((node) => node.id === connection.fromNodeId)).filter((node): node is CanvasNodeData => Boolean(node));
     const nodeNames = Object.fromEntries(nodes.map((node) => [node.id, node.title || node.type]));
     const selectedCosts = project?.costs.filter((cost) => selectedNodeId && cost.node_id === selectedNodeId) || [];
@@ -228,9 +231,10 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                         <section>
                             <Typography.Title level={5}>画布输入</Typography.Title>
                             <Typography.Paragraph>{selected ? `当前节点：${selected.title || selected.type}` : "选择一个画布节点查看其输入依赖"}</Typography.Paragraph>
-                            {selectedSource ? <Typography.Paragraph>来源：{selectedSource.kind === "script" ? "脚本" : "分镜"} {selectedSource.versionId.slice(0, 12)} · {selectedSourceCurrent ? "节点内容与当前批准版本一致" : "节点内容或批准版本已变化，请重新核对"}</Typography.Paragraph> : null}
+                            {selectedSource ? <Typography.Paragraph>来源：{selectedSource.kind === "script" ? "脚本" : selectedSource.kind === "storyboard" ? "分镜" : "提示词"} {selectedSource.versionId.slice(0, 12)} · {selectedSourceCurrent ? "节点内容与当前版本一致" : "节点内容或上游版本已变化，请重新核对"}</Typography.Paragraph> : null}
                             {selectedAsset ? <Typography.Paragraph>视频来源：{project.deliverables.find((item) => item.id === selectedAsset.deliverableId && selectedAsset.projectId === project.id)?.name || "来源项目或交付物已变化，请重新核对"}</Typography.Paragraph> : null}
                             {selectedImage ? <Typography.Paragraph>母版来源：{selectedImageSource?.name || selectedImage.sourceId}；原始参考：{selectedImageSource?.reference_ids?.map((id) => project.sources.find((item) => item.id === id)?.name || id).join("、") || "未记录"} · {selectedImage.projectId === project.id && selectedImage.masterVersionId === currentMaster?.id && currentMaster?.asset_ids.includes(selectedImage.sourceId) && selectedImage.originalStorageKey === selected?.metadata?.storageKey ? "仍引用当前母版的加入时副本" : "图片内容或母版版本已变化，请重新核对"}</Typography.Paragraph> : null}
+                            {selectedPromptImage ? <Typography.Paragraph>试图来源：{project.sources.find((item) => item.id === selectedPromptImage.sourceId)?.name || selectedPromptImage.sourceId} · 提示词版本 {selectedPromptImage.versionId.slice(0, 12)} · {selectedPromptImage.originalStorageKey !== selected?.metadata?.storageKey ? "节点图片已替换，请重新核对" : selectedPromptImage.projectId === project.id && project.prompt_adoption?.source_id === selectedPromptImage.sourceId ? "当前采用" : "未采用分支"}</Typography.Paragraph> : null}
                             {inputs.length ? inputs.map((node) => <Tag key={node.id}>{node.type} · {node.title || node.id}</Tag>) : <Typography.Text type="secondary">等待连接</Typography.Text>}
                             {selected ? <Typography.Paragraph className="mt-2">节点费用：{selectedCosts.length} 笔任务；已确认实付 {selectedSpend.size ? [...selectedSpend].map(([unit, amount]) => `${amount.toFixed(2)} ${unit}`).join("、") : "暂无"}；待结算 {selectedCosts.filter((cost) => cost.actual == null).length} 笔；预估未知 {selectedCosts.filter((cost) => cost.estimate == null).length} 笔。</Typography.Paragraph> : null}
                             <Typography.Paragraph type="secondary" className="mt-2">连线仅编辑画布。任务提交前需查看实际输入和费用；未知费用不会自动提交。</Typography.Paragraph>

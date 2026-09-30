@@ -84,8 +84,9 @@ export type CanvasNodeMetadata = {
     videoTaskId?: string;
     videoTaskProvider?: "openai" | "gemini";
     commerceAsset?: { projectId: string; deliverableId: string };
-    commerceSource?: { projectId: string; kind: "script" | "storyboard"; versionId: string; originalText: string };
+    commerceSource?: { projectId: string; kind: "script" | "storyboard" | "prompt"; versionId: string; originalText: string; parentVersionId?: string | null };
     commerceImage?: { projectId: string; sourceId: string; masterVersionId: string; originalStorageKey?: string };
+    commercePromptImage?: { projectId: string; sourceId: string; versionId: string; originalStorageKey?: string };
     groupId?: string;
     interactive?: boolean; // Plugin node interaction/move state; see CanvasNodeDefinition.interactionToggle.
 };
@@ -121,6 +122,7 @@ export type CanvasAssistantImage = {
     storageKey?: string;
     prompt: string;
     commerceImage?: { projectId: string; sourceId: string; masterVersionId: string };
+    commercePromptImage?: { projectId: string; sourceId: string; versionId: string };
 };
 
 export type CanvasAssistantMessage = {
