@@ -5,7 +5,7 @@ import { studioApi, type GalleryItem, type StudioProject, type StudioQuote } fro
 
 type Props = { project: StudioProject; busy: boolean; act: (operation: () => Promise<unknown>) => Promise<void> };
 type ImageOffer = { itemId: string; quote: StudioQuote };
-const RATIOS = ["1:1", "3:4", "4:3", "9:16", "16:9", "3:2", "2:3"];
+const RATIOS = ["auto", "-2", "1:1", "3:4", "4:3", "9:16", "16:9", "3:2", "2:3", "5:4", "4:5", "21:9"];
 
 export function CommerceGallerySection({ project, busy, act }: Props) {
     const latest = project.gallery_versions.at(-1);
@@ -66,7 +66,7 @@ export function CommerceGallerySection({ project, busy, act }: Props) {
                     <Space className="mb-2"><Typography.Text strong>{index + 1}. {item.kind}</Typography.Text><Button size="small" disabled={index === 0} onClick={() => move(index, -1)}>上移</Button><Button size="small" disabled={index === draft.length - 1} onClick={() => move(index, 1)}>下移</Button><Button size="small" disabled={draft.length === 1} onClick={() => setDraft((current) => current.filter((_, i) => i !== index))}>删除</Button></Space>
                     <Input className="mb-2" value={item.kind} onChange={(event) => update(index, { kind: event.target.value })} placeholder="图片类型" />
                     <Input.TextArea rows={3} value={item.prompt} onChange={(event) => update(index, { prompt: event.target.value })} placeholder="单张提示词" />
-                    <Select className="mt-2 w-full" value={item.ratio} onChange={(ratio) => update(index, { ratio })} options={RATIOS.map((ratio) => ({ value: ratio, label: ratio }))} />
+                    <Select className="mt-2 w-full" value={item.ratio} onChange={(ratio) => update(index, { ratio })} options={RATIOS.map((ratio) => ({ value: ratio, label: ratio === "-2" ? "自适应（-2）" : ratio === "auto" ? "自动（auto）" : ratio }))} />
                     <Space direction="vertical" className="mt-2 w-full">
                         <Input placeholder="可编辑标题" value={item.title} onChange={(event) => update(index, { title: event.target.value })} />
                         <Input placeholder="可编辑副标题" value={item.subtitle} onChange={(event) => update(index, { subtitle: event.target.value })} />

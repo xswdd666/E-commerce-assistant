@@ -573,13 +573,14 @@ class CommerceStudioTests(unittest.TestCase):
         offer = gallery.plan_quote(self.store, self.project, "白底为主")
         self.assertEqual((offer["estimate"], offer["currency"]), (0.10, "CNY"))
         self.assertNotIn("99 升", str(offer["input_snapshot"]))
-        returned = {"items": [{"cateName": "主图", "prompt": "白底产品主图", "imgRatio": "1:1"}]}
+        returned = {"items": [{"cateName": "主图", "prompt": "白底产品主图", "imgRatio": "4:5"}]}
         with patch.object(gallery, "provider_key", return_value="test-key"), patch.object(gallery.seeany, "upload_image", return_value="https://seeany.com/upload"), patch.object(gallery.seeany, "submit", return_value=returned) as submit:
             task = gallery.run_plan(self.store, self.project, {"requirement": "白底为主", "approved_fingerprint": offer["fingerprint"], "request_id": "plan-request-123"})
         self.assertEqual(task["status"], "待审核")
         self.assertEqual((task["estimate"], task["currency"]), (0.10, "CNY"))
         self.assertNotIn("99 升", submit.call_args.args[2]["sellingPoints"])
         self.assertEqual(self.project["gallery_versions"][-1]["origin"], "SeeAny")
+        self.assertEqual(self.project["gallery_versions"][-1]["items"][0]["ratio"], "4:5")
         self.project["tasks"].append({"kind": "gallery_plan", "status": "待核对"})
         with self.assertRaisesRegex(ValueError, "尚未核对"):
             gallery.plan_quote(self.store, self.project)
