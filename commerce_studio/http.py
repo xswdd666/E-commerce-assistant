@@ -305,6 +305,19 @@ class Handler(BaseHTTPRequestHandler):
         if not self._trusted_request():
             return
         try:
+            parsed = urlparse(self.path)
+            parts = [part for part in parsed.path.split("/") if part]
+            if len(parts) == 5 and parts[:2] == ["api", "projects"] and parts[3:] == ["flova", "media"]:
+                query = parse_qs(parsed.query)
+                length = int(self.headers.get("Content-Length", "0"))
+                with STORE.lock:
+                    project = STORE.load(parts[2])
+                    source = flova_flow.store_canvas_media(STORE, project, query.get("node_id", [""])[0],
+                                                            query.get("kind", [""])[0],
+                                                            self.headers.get("Content-Type", "").split(";", 1)[0].lower(),
+                                                            self.rfile, length)
+                self._send(200, source)
+                return
             if urlparse(self.path).path == "/api/restore":
                 length = int(self.headers.get("Content-Length", "0"))
                 if length <= 0 or length > 250 * 1024 * 1024:

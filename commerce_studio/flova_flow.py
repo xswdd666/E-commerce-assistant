@@ -17,6 +17,56 @@ from .core import fingerprint, ident, stamp
 
 ACTIVE = set()
 ACTIVE_LOCK = threading.Lock()
+MEDIA_TYPES = {"video/mp4": ".mp4", "video/webm": ".webm", "video/quicktime": ".mov",
+               "audio/mpeg": ".mp3", "audio/mp4": ".m4a", "audio/wav": ".wav", "audio/ogg": ".ogg", "audio/webm": ".webm"}
+MAX_MEDIA_BYTES = 100 * 1024 * 1024
+
+
+def store_canvas_media(store, project, node_id, kind, mime, stream, length):
+    if not isinstance(node_id, str) or not 1 <= len(node_id) <= 128 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for c in node_id):
+        raise ValueError("画布媒体节点标识无效")
+    if kind not in ("video", "audio") or mime not in MEDIA_TYPES or not mime.startswith(kind + "/"):
+        raise ValueError("画布媒体格式不受支持")
+    if not 0 < length <= MAX_MEDIA_BYTES:
+        raise ValueError("画布参考媒体为空或超过 100 MB")
+    directory = store.root / "files" / project["id"]
+    directory.mkdir(parents=True, exist_ok=True)
+    temporary = directory / f"{ident()}.partial"
+    digest = hashlib.sha256()
+    try:
+        with temporary.open("wb") as output:
+            remaining = length
+            while remaining:
+                chunk = stream.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    raise ValueError("画布参考媒体上传未完成")
+                output.write(chunk)
+                digest.update(chunk)
+                remaining -= len(chunk)
+        checksum = digest.hexdigest()
+        existing = next((source for source in project["sources"] if source.get("origin") == "Canvas media"
+                         and source.get("canvas_node_id") == node_id and source["mime"] == mime and source["sha256"] == checksum), None)
+        if existing:
+            return existing
+        stored_bytes = sum(source.get("bytes", 0) for source in project["sources"]) + sum(item.get("bytes", 0) for item in project.get("deliverables", []))
+        if stored_bytes + length > 240 * 1024 * 1024:
+            raise ValueError("项目文件接近 250 MB 备份上限，请改用较小的参考媒体")
+        source_id = ident()
+        target = directory / source_id
+        temporary.replace(target)
+        source = {"id": source_id, "name": f"canvas-{kind}-{node_id}{MEDIA_TYPES[mime]}", "mime": mime,
+                  "sha256": checksum, "bytes": length, "created": stamp(), "origin": "Canvas media",
+                  "canvas_node_id": node_id, "parse_status": "媒体参考"}
+        project["sources"].append(source)
+        try:
+            store.save(project)
+        except Exception:
+            project["sources"].remove(source)
+            target.unlink(missing_ok=True)
+            raise
+        return source
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _action_details(action):
@@ -114,8 +164,23 @@ def _canvas_input(project, body):
         selected.append({"node_id": reference["node_id"], "source_id": source["id"], "sha256": digest, "view": source["view_label"]})
     if len({item["node_id"] for item in selected}) != len(selected):
         raise ValueError("画布参考图节点重复")
+    media = body.get("reference_media", [])
+    if not isinstance(media, list) or len(media) > 6:
+        raise ValueError("画布最多接受六份音视频参考")
+    media_sources = {source["id"]: source for source in project["sources"] if source.get("origin") == "Canvas media"}
+    selected_media = []
+    for reference in media:
+        if not isinstance(reference, dict) or not all(isinstance(reference.get(key), str) for key in ("node_id", "source_id", "sha256", "kind")):
+            raise ValueError("画布音视频参考无效")
+        source = media_sources.get(reference.get("source_id"))
+        if not source or source.get("canvas_node_id") != reference.get("node_id") or source.get("sha256") != reference.get("sha256") or not source["mime"].startswith(str(reference.get("kind")) + "/"):
+            raise ValueError("画布音视频参考已变化，请重新上传并查看输入")
+        selected_media.append({"node_id": reference["node_id"], "source_id": source["id"], "sha256": source["sha256"],
+                               "kind": reference["kind"], "mime": source["mime"]})
+    if len({item["node_id"] for item in selected_media}) != len(selected_media):
+        raise ValueError("画布音视频参考节点重复")
     return {"canvas_project_id": body["canvas_project_id"], "config_node_id": body["config_node_id"],
-            "connection_ids": edges, "prompt": prompt.strip(), "reference_images": selected}
+            "connection_ids": edges, "prompt": prompt.strip(), "reference_images": selected, "reference_media": selected_media}
 
 
 def quote(project, canvas_context=None):
@@ -171,7 +236,10 @@ def _upload(path: Path, envelope_path: Path):
     executable = flova.executable()
     if not executable:
         raise ValueError("未找到 Flova CLI")
-    completed = subprocess.run([executable, "upload", str(path)], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    command = [executable, "upload", str(path)]
+    if path.stat().st_size > 20 * 1024 * 1024:
+        command.extend(["--timeout", "1800"])
+    completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
     try:
         envelope = json.loads(completed.stdout)
     except ValueError as exc:
@@ -203,6 +271,7 @@ def _run_worker(store, project_id, task_id):
                                 + "\n\n母版仍待核实的结构不得用于特写、规格或卖点宣称。"
                                 + ("\n\n画布视频配置节点输入：\n" + snapshot["canvas_input"]["prompt"]
                                    + "\n画布连线选定的母版视角：" + "、".join(item["view"] for item in snapshot["canvas_input"]["reference_images"])
+                                   + "\n画布连线音视频参考：" + "、".join(item["kind"] + " " + item["node_id"] for item in snapshot["canvas_input"]["reference_media"])
                                    if snapshot.get("canvas_input") else ""), encoding="utf-8")
             files = [material]
             for asset in snapshot["assets"]:
@@ -212,6 +281,21 @@ def _run_worker(store, project_id, task_id):
                     raise ValueError("Flova 母版图片格式不支持")
                 path = directory / f"master-{asset['view']}{suffix}"
                 path.write_bytes(raw)
+                files.append(path)
+            for index, media in enumerate(snapshot.get("canvas_input", {}).get("reference_media", [])):
+                source = next((item for item in project["sources"] if item["id"] == media["source_id"]), None)
+                if not source:
+                    raise ValueError("画布音视频参考文件已丢失")
+                if source["sha256"] != media["sha256"] or source["mime"] != media["mime"]:
+                    raise ValueError("画布音视频参考文件已变化")
+                path = directory / f"canvas-{media['kind']}-{index}{MEDIA_TYPES[media['mime']]}"
+                digest = hashlib.sha256()
+                with (store.root / "files" / project["id"] / source["id"]).open("rb") as original, path.open("wb") as output:
+                    for chunk in iter(lambda: original.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                        output.write(chunk)
+                if digest.hexdigest() != source["sha256"]:
+                    raise ValueError("画布音视频参考文件校验失败")
                 files.append(path)
             envelopes = []
             for index, path in enumerate(files):
@@ -228,7 +312,7 @@ def _run_worker(store, project_id, task_id):
                           "每个镜头遵守分镜目标时长；静音时也要能理解；不要把未获核实的结构当作卖点。"
                           "本轮先制作并呈现镜头与时间线，最终导出等待人工审核。")
                 if snapshot.get("canvas_input"):
-                    prompt += "请同时遵守 approved-plan.txt 中的画布视频配置节点输入；其中列出的视角是画布连线选定的参考图。与已确认事实或批准分镜冲突时，以已批准内容为准。"
+                    prompt += "请同时遵守 approved-plan.txt 中的画布视频配置节点输入；其中列出的视角是画布连线选定的参考图，canvas-video 和 canvas-audio 文件是对应节点的参考媒体。请只将其作为该轮镜头创作的参考，不直接覆盖已批准分镜。与已确认事实或批准分镜冲突时，以已批准内容为准。"
             with store.lock:
                 project = store.load(project_id)
                 task = next(t for t in project["tasks"] if t["id"] == task_id)

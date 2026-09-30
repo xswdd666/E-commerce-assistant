@@ -377,18 +377,40 @@ class CommerceStudioTests(unittest.TestCase):
         other_source = next(item for item in self.project["sources"] if item["id"] == master["asset_ids"][1])
         with self.assertRaisesRegex(ValueError, "缺少已批准分镜"):
             flova_flow.quote(self.project, {**canvas, "reference_images": [{"node_id": "image-1", "sha256": other_source["sha256"]}]})
+        video = flova_flow.store_canvas_media(self.store, self.project, "video-1", "video", "video/mp4", io.BytesIO(b"mock-video"), len(b"mock-video"))
+        audio = flova_flow.store_canvas_media(self.store, self.project, "audio-1", "audio", "audio/mpeg", io.BytesIO(b"mock-audio"), len(b"mock-audio"))
+        self.assertEqual(flova_flow.store_canvas_media(self.store, self.project, "video-1", "video", "video/mp4", io.BytesIO(b"mock-video"), len(b"mock-video"))["id"], video["id"])
+        canvas["reference_media"] = [{"node_id": "video-1", "source_id": video["id"], "sha256": video["sha256"], "kind": "video"},
+                                     {"node_id": "audio-1", "source_id": audio["id"], "sha256": audio["sha256"], "kind": "audio"}]
+        with self.assertRaisesRegex(ValueError, "已变化"):
+            flova_flow.quote(self.project, {**canvas, "reference_media": [{**canvas["reference_media"][0], "sha256": "0" * 64}]})
+        offer = flova_flow.quote(self.project, canvas)
         with patch.object(flova_flow.threading, "Thread"):
             task = flova_flow.run(self.store, self.project, {"request_id": "canvas-run-123", "approved_fingerprint": offer["fingerprint"], "canvas_context": canvas})
         self.assertEqual(task["node_id"], "video-config-1")
         uploaded_plan = []
+        uploads = []
         def inspect_upload(path, envelope):
+            uploads.append(path.name)
             if path.name == "approved-plan.txt":
                 uploaded_plan.append(path.read_text(encoding="utf-8"))
         with patch.object(flova_flow, "_upload", side_effect=inspect_upload), patch.object(flova_flow.flova, "invoke", return_value={"status": "completed", "terminal": True, "stream_chat_id": "canvas-stream", "pending_actions": []}) as remote:
             flova_flow._run_worker(self.store, self.project["id"], task["id"])
         self.assertIn("晨光厨房，展示白色产品", uploaded_plan[0])
         self.assertIn("画布视频配置节点输入", uploaded_plan[0])
+        self.assertIn("canvas-video-0.mp4", uploads)
+        self.assertIn("canvas-audio-1.mp3", uploads)
+        self.assertEqual(len(uploads), 4)
         self.assertIn("画布", remote.call_args.args[3])
+
+    def test_canvas_media_over_document_limit_survives_project_backup(self):
+        raw = b"v" * (26 * 1024 * 1024)
+        source = flova_flow.store_canvas_media(self.store, self.project, "video-1", "video", "video/mp4", io.BytesIO(raw), len(raw))
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "project.zip"
+            backup.write_project_archive(self.store, self.project, archive)
+            restored = backup.restore_project(self.store, archive)
+        self.assertEqual(self.store.source_bytes(restored, source["id"])[1], raw)
 
     def test_flova_shots_advance_only_after_review_and_export_uses_current_versions(self):
         self.approved_project()
@@ -845,6 +867,24 @@ class CommerceStudioTests(unittest.TestCase):
                 self.assertNotEqual(restored["id"], self.project["id"])
                 self.assertEqual(self.store.source_bytes(restored, source["id"])[1], b"merchant facts")
                 self.assertNotIn(b"DEEPSEEK_API_KEY", archive)
+            finally:
+                server.shutdown()
+                server.server_close()
+                worker.join(timeout=2)
+
+    def test_canvas_media_binary_upload_route_records_local_source(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), bridge.Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        with patch.object(bridge, "STORE", self.store):
+            worker.start()
+            try:
+                url = f"http://127.0.0.1:{server.server_port}/api/projects/{self.project['id']}/flova/media?node_id=audio-1&kind=audio"
+                request = Request(url, data=b"local-audio", headers={"Origin": "http://127.0.0.1:3000", "Content-Type": "audio/mpeg"}, method="POST")
+                with urlopen(request) as response:
+                    source = json.load(response)
+                self.assertEqual(source["origin"], "Canvas media")
+                self.assertEqual(source["canvas_node_id"], "audio-1")
+                self.assertEqual(self.store.source_bytes(self.store.load(self.project["id"]), source["id"])[1], b"local-audio")
             finally:
                 server.shutdown()
                 server.server_close()

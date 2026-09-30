@@ -261,18 +261,32 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                             {selected?.type === CanvasNodeType.Config ? <Space direction="vertical" className="mt-2 w-full">
                                 {selected.metadata?.generationMode === "video" ? <>
                                     <Button disabled={busy || !project.storyboard_approval} onClick={() => void act(async () => {
+                                        setCanvasFlovaOffer(null);
+                                        setCanvasFlovaRequest(null);
                                         const context = await hydrateNodeGenerationContext(buildNodeGenerationContext(selected.id, nodes, connections, selected.metadata?.composerContent || selected.metadata?.prompt || ""));
-                                        if (context.referenceVideos.length || context.referenceAudios.length) throw new Error("Flova 画布入口尚不支持视频或音频参考连线，请先在 Flova 网页处理这些素材");
+                                        const { getMediaBlob } = await import("@/services/file-storage");
+                                        const mediaReferences: FlovaCanvasContext["reference_media"] = [];
+                                        for (const [kind, references] of [["video", context.referenceVideos], ["audio", context.referenceAudios]] as const) {
+                                            for (const reference of references) {
+                                                if (!reference.storageKey) throw new Error(`${kind === "video" ? "视频" : "音频"}参考节点需要先保存为本机素材`);
+                                                const blob = await getMediaBlob(reference.storageKey);
+                                                if (!blob) throw new Error("画布音视频原文件已丢失，请重新导入");
+                                                const source = await studioApi.flovaMedia(project.id, reference.id, kind, blob, blob.type || reference.type);
+                                                mediaReferences.push({ node_id: reference.id, source_id: source.id, sha256: source.sha256, kind });
+                                            }
+                                        }
                                         const request: FlovaCanvasContext = { canvas_project_id: canvasId, config_node_id: selected.id,
                                             connection_ids: connections.filter((edge) => edge.toNodeId === selected.id).map((edge) => edge.id), prompt: context.prompt,
                                             reference_images: await Promise.all(context.referenceImages.map(async (image) => ({ node_id: image.id,
-                                                sha256: [...new Uint8Array(await crypto.subtle.digest("SHA-256", await (await fetch(image.dataUrl)).arrayBuffer()))].map((byte) => byte.toString(16).padStart(2, "0")).join("") }))) };
+                                                sha256: [...new Uint8Array(await crypto.subtle.digest("SHA-256", await (await fetch(image.dataUrl)).arrayBuffer()))].map((byte) => byte.toString(16).padStart(2, "0")).join("") }))),
+                                            reference_media: mediaReferences };
                                         setCanvasFlovaRequest(request);
                                         setCanvasFlovaOffer(await studioApi.flovaQuote(project.id, request));
                                     })}>按当前视频连线查看 Flova 输入</Button>
                                     {canvasFlovaOffer && canvasFlovaRequest?.config_node_id === selected.id ? <div>
                                         <Typography.Paragraph className="whitespace-pre-wrap">画布提示词：{canvasFlovaRequest.prompt}</Typography.Paragraph>
-                                        <Typography.Paragraph>连线 {canvasFlovaRequest.connection_ids.length} 条；母版参考图 {canvasFlovaRequest.reference_images.length} 张；已批准分镜 {String((canvasFlovaOffer.input_snapshot as { storyboard_id: string }).storyboard_id).slice(0, 12)}；费用：{canvasFlovaOffer.estimate == null ? "未知" : canvasFlovaOffer.estimate}</Typography.Paragraph>
+                                        <Typography.Paragraph>连线 {canvasFlovaRequest.connection_ids.length} 条；母版参考图 {canvasFlovaRequest.reference_images.length} 张；音视频参考 {canvasFlovaRequest.reference_media.length} 份；已批准分镜 {String((canvasFlovaOffer.input_snapshot as { storyboard_id: string }).storyboard_id).slice(0, 12)}；费用：{canvasFlovaOffer.estimate == null ? "未知" : canvasFlovaOffer.estimate}</Typography.Paragraph>
+                                        {[...canvasFlovaRequest.reference_images.map((item) => ({ id: item.node_id, kind: "母版图" })), ...canvasFlovaRequest.reference_media.map((item) => ({ id: item.node_id, kind: item.kind === "video" ? "视频" : "音频" }))].map((item) => <Tag key={item.id}>{item.kind} · {nodeNames[item.id] || item.id}</Tag>)}
                                         <Button type="primary" disabled={busy} onClick={() => void act(async () => { await studioApi.flovaRun(project.id, canvasFlovaOffer.fingerprint, crypto.randomUUID(), canvasFlovaRequest); setCanvasFlovaOffer(null); setCanvasFlovaRequest(null); })}>确认按此画布输入提交 Flova 整片</Button>
                                     </div> : null}
                                 </> : null}

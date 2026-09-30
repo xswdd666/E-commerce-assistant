@@ -51,7 +51,7 @@ export type StudioProject = {
 export type MasterRequest = { group: number; view_label: string; views: string; source_id: string };
 export type StudioQuote = { fingerprint: string; estimate: number | null; currency?: string | null; pricing_source: string; input_snapshot: unknown };
 export type PreviewRequest = { canvas_project_id: string; config_node_id: string; reference_node_id: string; connection_ids: string[]; prompt: string; ratio: string; reference_data_url: string };
-export type FlovaCanvasContext = { canvas_project_id: string; config_node_id: string; connection_ids: string[]; prompt: string; reference_images: Array<{ node_id: string; sha256: string }> };
+export type FlovaCanvasContext = { canvas_project_id: string; config_node_id: string; connection_ids: string[]; prompt: string; reference_images: Array<{ node_id: string; sha256: string }>; reference_media: Array<{ node_id: string; source_id: string; sha256: string; kind: "video" | "audio" }> };
 
 async function request<T>(path: string, body?: unknown): Promise<T> {
     const response = await fetch(`${BASE}${path}`, {
@@ -119,6 +119,12 @@ export const studioApi = {
     flovaShotApprove: (id: string, task_id: string) => request(`/projects/${id}/flova/shots/approve`, { task_id }),
     flovaShotSequenceApprove: (id: string) => request(`/projects/${id}/flova/shots/approve-sequence`, {}),
     flovaRun: (id: string, approved_fingerprint: string, request_id: string, canvas_context?: FlovaCanvasContext) => request(`/projects/${id}/flova/run`, { approved_fingerprint, request_id, canvas_context }),
+    flovaMedia: async (id: string, nodeId: string, kind: "video" | "audio", blob: Blob, mime: string) => {
+        const response = await fetch(`${BASE}/projects/${id}/flova/media?node_id=${encodeURIComponent(nodeId)}&kind=${kind}`, { method: "POST", headers: { "Content-Type": mime }, body: blob });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "画布参考媒体上传失败");
+        return result as { id: string; sha256: string; mime: string; bytes: number };
+    },
     flovaRecover: (id: string, taskId: string) => request(`/projects/${id}/flova/${taskId}/recover`, {}),
     flovaResumeAction: (id: string, task_id: string, action_id: string, option_id: string) => request(`/projects/${id}/flova/actions/resume`, { task_id, action_id, option_id }),
     flovaResources: (id: string) => request<{ items: Array<{ resource_id: string; name?: string; media_type?: string; status?: string }>; unparsed: boolean }>(`/projects/${id}/flova/resources`, {}),

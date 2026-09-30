@@ -91,7 +91,8 @@ def restore_project(store, raw):
                 if source_id in source_files:
                     raise ValueError("备份中的来源文件标识重复")
                 info = archive.getinfo(f"files/{source_id}")
-                if info.file_size > 25 * 1024 * 1024:
+                limit = 100 * 1024 * 1024 if source.get("origin") == "Canvas media" and source.get("mime", "").startswith(("audio/", "video/")) else 25 * 1024 * 1024
+                if info.file_size > limit:
                     raise ValueError("备份中的来源文件过大")
                 path = temporary / source_id
                 _copy_verified(archive, info, path, source.get("sha256"), "备份来源文件校验失败")
