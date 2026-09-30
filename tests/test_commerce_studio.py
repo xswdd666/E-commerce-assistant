@@ -389,6 +389,10 @@ class CommerceStudioTests(unittest.TestCase):
         scene["prompt_version_id"] = "scene-prompt"
         self.project["prompt_versions"].append({"id": "scene-prompt", "brief_id": self.project["brief_versions"][-1]["id"], "master_id": master["id"], "text": "晨光场景实际生成提示词"})
         self.project["prompt_reviews"].append({"id": "scene-review", "source_id": scene["id"], "decision": "采用"})
+        scene_board = self.store.add_storyboard(self.project, [{"visual": "厨房场景", "duration": 4,
+            "reference_asset_id": master["asset_ids"][0], "scene_source_id": scene["id"], "ratio": "16:9"}])
+        with self.assertRaisesRegex(ValueError, "人工采用"):
+            self.store.approve_storyboard(self.project, scene_board["id"])
         scene_reference = {"node_id": "scene-image-1", "sha256": scene["sha256"]}
         with self.assertRaisesRegex(ValueError, "已采用场景图"):
             flova_flow.quote(self.project, {**canvas, "reference_images": [*canvas["reference_images"], scene_reference]})
@@ -417,6 +421,15 @@ class CommerceStudioTests(unittest.TestCase):
         self.assertIn("evidence-2.png", uploads)
         self.assertEqual(len(uploads), 6)
         self.assertIn("画布", remote.call_args.args[3])
+        self.store.approve_storyboard(self.project, scene_board["id"])
+        with self.assertRaisesRegex(ValueError, "缺少已批准分镜使用的场景图"):
+            flova_flow.quote(self.project, {**canvas, "reference_images": canvas["reference_images"][:1]})
+        scene_offer = flova_flow.shot_quote(self.project, scene_board["shots"][0]["id"])
+        self.assertEqual([asset["kind"] for asset in scene_offer["input_snapshot"]["assets"]], ["master", "scene", "evidence"])
+        self.assertEqual(scene_offer["input_snapshot"]["shot"]["ratio"], "16:9")
+        self.project["prompt_adoption"] = None
+        with self.assertRaisesRegex(ValueError, "已不属于当前人工采用"):
+            flova_flow.shot_quote(self.project, scene_board["shots"][0]["id"])
 
     def test_canvas_media_over_document_limit_survives_project_backup(self):
         raw = b"v" * (26 * 1024 * 1024)

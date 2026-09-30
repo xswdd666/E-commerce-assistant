@@ -26,7 +26,7 @@ export type StudioProject = {
     direction_approval: string | null;
     script_versions: Array<{ id: string; text: string; direction_id: string; brief_id: string; master_id: string }>;
     script_approval: string | null;
-    storyboard_versions: Array<{ id: string; shots: Array<{ id: string; visual: string; duration: number; reference_asset_id: string; caption: string; detail_ids?: string[] }> }>;
+    storyboard_versions: Array<{ id: string; shots: Array<{ id: string; visual: string; duration: number; reference_asset_id: string; scene_source_id?: string | null; ratio?: string; caption: string; detail_ids?: string[] }> }>;
     storyboard_approval: string | null;
     gallery_versions: GalleryPlan[];
     gallery_approval: string | null;
@@ -109,7 +109,7 @@ export const studioApi = {
     approveDirection: (id: string, direction_id: string) => request(`/projects/${id}/directions/approve`, { direction_id }),
     script: (id: string, text: string) => request(`/projects/${id}/scripts`, { text }),
     approveScript: (id: string, script_id: string) => request(`/projects/${id}/scripts/approve`, { script_id }),
-    storyboard: (id: string, shots: Array<{ visual: string; duration: number; reference_asset_id: string; caption: string; detail_ids: string[] }>) => request(`/projects/${id}/storyboards`, { shots }),
+    storyboard: (id: string, shots: Array<{ visual: string; duration: number; reference_asset_id: string; scene_source_id?: string | null; ratio?: string; caption: string; detail_ids: string[] }>) => request(`/projects/${id}/storyboards`, { shots }),
     approveStoryboard: (id: string, storyboard_id: string) => request(`/projects/${id}/storyboards/approve`, { storyboard_id }),
     flovaCreate: (id: string) => request(`/projects/${id}/flova/create`, {}),
     flovaAttach: (id: string, project_id: string) => request(`/projects/${id}/flova/attach`, { project_id }),

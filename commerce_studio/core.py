@@ -459,9 +459,15 @@ class Store:
             known = {d["id"] for d in project["master_versions"][-1]["inferred_details"] if isinstance(d, dict)}
             if not isinstance(detail_ids, list) or any(not isinstance(d, str) for d in detail_ids) or len(detail_ids) != len(set(detail_ids)) or any(d not in known for d in detail_ids):
                 raise ValueError("镜头引用了未知的推断细节")
+            ratio = shot.get("ratio") or "9:16"
+            if ratio not in ("9:16", "16:9", "1:1"):
+                raise ValueError("分镜画幅无效")
+            scene_source_id = shot.get("scene_source_id") or None
+            if scene_source_id is not None and not isinstance(scene_source_id, str):
+                raise ValueError("分镜场景图无效")
             cleaned.append({"id": ident(), "visual": str(shot["visual"]).strip(), "duration": duration,
                             "reference_asset_id": shot.get("reference_asset_id"), "caption": str(shot.get("caption") or ""),
-                            "detail_ids": detail_ids})
+                            "detail_ids": detail_ids, "ratio": ratio, "scene_source_id": scene_source_id})
         version = {"id": ident(), "script_id": project["script_approval"], "master_id": project["master_versions"][-1]["id"],
                    "shots": cleaned, "created": stamp()}
         project["storyboard_versions"].append(version)
@@ -475,6 +481,10 @@ class Store:
         approved_assets = set(project["master_versions"][-1]["asset_ids"])
         if any(shot["reference_asset_id"] not in approved_assets for shot in storyboard["shots"]):
             raise ValueError("每个镜头必须引用当前已确认母版素材")
+        from .flova_flow import _adopted_scene_images
+        adopted_scenes = _adopted_scene_images(project, project["brief_versions"][-1]["id"], project["master_versions"][-1]["id"])
+        if any(shot.get("scene_source_id") and shot["scene_source_id"] not in adopted_scenes for shot in storyboard["shots"]):
+            raise ValueError("镜头场景图须是当前产品版本已人工采用的图片")
         details = {d["id"]: d for d in project["master_versions"][-1]["inferred_details"] if isinstance(d, dict)}
         if any(details.get(detail_id, {}).get("status") != "已核实" for shot in storyboard["shots"] for detail_id in shot.get("detail_ids", [])):
             raise ValueError("镜头涉及未核实的推断细节，请先用原始实拍逐项核实")
