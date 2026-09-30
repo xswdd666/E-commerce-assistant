@@ -19,10 +19,28 @@ ACTIVE = set()
 ACTIVE_LOCK = threading.Lock()
 
 
+def _action_details(action):
+    details = {key: action.get(key) for key in ("action_id", "type", "message", "resume_message_id", "payload", "action_url")}
+    details["blocking"] = action.get("blocking", True)
+    return details
+
+
+def _action_signature(action):
+    details = _action_details(action)
+    details["options"] = [{"id": option.get("id"), "effect": option.get("effect")} for option in action.get("options") or [] if isinstance(option, dict)]
+    return fingerprint(details)
+
+
 def _apply_run_result(task, result):
     task["remote_id"] = result.get("stream_chat_id") or task.get("remote_id")
     task["result_summary"] = {key: result.get(key) for key in ("status", "terminal", "stream_chat_id", "project_url")}
-    task["pending_actions"] = [{"type": a.get("type"), "message": a.get("message"), "blocking": a.get("blocking", True)} for a in result.get("pending_actions") or []]
+    pending = result.get("pending_actions") or []
+    task["pending_actions"] = [{**_action_details(action),
+                                "options": [{"id": option.get("id"), "effect": option.get("effect"), "label": option.get("label")}
+                                            for option in action.get("options") or [] if isinstance(option, dict)]}
+                               for action in pending if isinstance(action, dict)]
+    if len(task["pending_actions"]) != len(pending):
+        task["pending_actions"].append({"type": "manual-check", "message": "Flova 确认事项格式异常，请在 Flova 核对", "blocking": True})
     status = str(result.get("status") or "").lower()
     task["status"] = ("待用户确认" if any(a["blocking"] for a in task["pending_actions"])
                       else "待审核" if result.get("terminal") and status in ("success", "completed")
@@ -279,6 +297,65 @@ def recover(store, project, task_id):
     _apply_run_result(task, result)
     _remember_project_url(project, result)
     store.save(project)
+    return task
+
+
+def _resume_worker(store, project_id, task_id, action_id, message_id, option_id):
+    try:
+        with store.lock:
+            project = store.load(project_id)
+            task = next(t for t in project["tasks"] if t["id"] == task_id)
+            task.update(status="远端运行中", updated=stamp())
+            store.save(project)
+        result = flova.invoke("run", "resume", project["external"]["flova_project_id"],
+                              "--message-id", message_id, "--action-id", action_id, "--option", option_id)
+        with store.lock:
+            project = store.load(project_id)
+            task = next(t for t in project["tasks"] if t["id"] == task_id)
+            _apply_run_result(task, result)
+            _remember_project_url(project, result)
+            store.save(project)
+    except Exception as exc:
+        with store.lock:
+            project = store.load(project_id)
+            task = next(t for t in project["tasks"] if t["id"] == task_id)
+            task.update(status="待核对", error=str(exc)[:300], updated=stamp())
+            store.save(project)
+    finally:
+        with ACTIVE_LOCK:
+            ACTIVE.discard(project_id)
+
+
+def resume_action(store, project, task_id, action_id, option_id):
+    task = next((item for item in project["tasks"] if item.get("id") == task_id and item.get("provider") == "Flova"), None)
+    if not task or task.get("status") != "待用户确认" or not task.get("remote_id"):
+        raise ValueError("Flova 任务没有可继续的确认事项")
+    action = next((item for item in task.get("pending_actions", []) if item.get("action_id") == action_id), None)
+    if not action or not action.get("resume_message_id") or not isinstance(option_id, str):
+        raise ValueError("Flova 确认事项标识不完整")
+    option = next((item for item in action.get("options", []) if item.get("id") == option_id and item.get("effect") == "resume"), None)
+    if not option:
+        raise ValueError("请选择可继续的 Flova 选项")
+    project_id = task["input_snapshot"]["flova_project_id"]
+    if project_id != project["external"]["flova_project_id"]:
+        raise ValueError("Flova 项目关联已变化，请先核对")
+    live = flova.pending_actions(project_id)
+    current = next((item for item in live.get("pending_actions", []) if isinstance(item, dict) and item.get("action_id") == action_id), None)
+    if not current or _action_signature(current) != _action_signature(action):
+        raise ValueError("Flova 确认事项已变化，请恢复状态后重新选择")
+    with ACTIVE_LOCK:
+        if project["id"] in ACTIVE:
+            raise ValueError("Flova 项目已有运行中的本地进程")
+        ACTIVE.add(project["id"])
+    try:
+        task.update(status="已排队", updated=stamp())
+        store.save(project)
+        threading.Thread(target=_resume_worker, args=(store, project["id"], task_id, action_id,
+                                                       action["resume_message_id"], option_id), daemon=True).start()
+    except Exception:
+        with ACTIVE_LOCK:
+            ACTIVE.discard(project["id"])
+        raise
     return task
 
 

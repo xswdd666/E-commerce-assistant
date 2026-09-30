@@ -205,6 +205,8 @@ class Handler(BaseHTTPRequestHandler):
                     return flova_flow.approve_video(STORE, project, body.get("task_id"))
                 if parts[3:] == ["flova", "run"]:
                     return flova_flow.run(STORE, project, body)
+                if parts[3:] == ["flova", "actions", "resume"]:
+                    return flova_flow.resume_action(STORE, project, body.get("task_id"), body.get("action_id"), body.get("option_id"))
                 if len(parts) == 6 and parts[3] == "flova" and parts[5] == "recover":
                     return flova_flow.recover(STORE, project, parts[4])
                 if parts[3:] == ["flova", "export", "quote"]:

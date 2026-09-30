@@ -10,6 +10,7 @@ export type StudioCost = { id: string; task_id: string; provider: string; stage:
 export type JevObservation = { id: string; task_id: string; brief_id: string; master_id: string; direction_ids: string[]; choice_id: string; confidence: number; probabilities: Record<string, number>; model: string; usage?: { input_tokens: number; output_tokens: number }; comparisons: Array<{ direction_id: string; agrees: boolean; at: string }>; created: string };
 export type PromptFields = { product: string; scene: string; composition: string; lighting: string; negative: string; ratio: string };
 export type PromptVersion = { id: string; parent_id: string | null; brief_id: string; master_id: string; fields: PromptFields; text: string; origin: string; changed_fields: string[]; created: string };
+export type FlovaPendingAction = { action_id?: string; type?: string; message?: string; blocking?: boolean; resume_message_id?: string; payload?: unknown; action_url?: string; options?: Array<{ id: string; effect: "resume" | "open_url" | "none"; label?: string }> };
 export type StudioProject = {
     id: string;
     restored_from?: string;
@@ -43,7 +44,7 @@ export type StudioProject = {
     costs: StudioCost[];
     cost_target: { amount: number; currency: string } | null;
     external: { flova_project_id: string; flova_project_url: string };
-    tasks: Array<{ id: string; provider: string; kind?: string; node_id?: string; status: string; remote_id?: string | null; estimate: number | null; actual: number | null; candidate_group?: number; view_label?: string; asset_ids?: string[]; source_id?: string; input_snapshot?: { item?: { id: string }; version_id?: string; shot_id?: string; storyboard_id?: string; config_node_id?: string; brief_id?: string; master_id?: string; prompt?: string; reference_node_id?: string; connection_ids?: string[]; reference_sha256?: string }; error?: string; interrupted_at?: string; manual_resolution?: { outcome: string; note: string; at: string }; pending_actions?: Array<{ type?: string; message?: string; blocking?: boolean }> }>;
+    tasks: Array<{ id: string; provider: string; kind?: string; node_id?: string; status: string; remote_id?: string | null; estimate: number | null; actual: number | null; candidate_group?: number; view_label?: string; asset_ids?: string[]; source_id?: string; input_snapshot?: { item?: { id: string }; version_id?: string; shot_id?: string; storyboard_id?: string; config_node_id?: string; brief_id?: string; master_id?: string; prompt?: string; reference_node_id?: string; connection_ids?: string[]; reference_sha256?: string }; error?: string; interrupted_at?: string; manual_resolution?: { outcome: string; note: string; at: string }; pending_actions?: FlovaPendingAction[] }>;
     chat: Array<{ id: string; prompt: string; reply: string; brief_id?: string; created: string }>;
 };
 
@@ -118,6 +119,7 @@ export const studioApi = {
     flovaShotSequenceApprove: (id: string) => request(`/projects/${id}/flova/shots/approve-sequence`, {}),
     flovaRun: (id: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/flova/run`, { approved_fingerprint, request_id }),
     flovaRecover: (id: string, taskId: string) => request(`/projects/${id}/flova/${taskId}/recover`, {}),
+    flovaResumeAction: (id: string, task_id: string, action_id: string, option_id: string) => request(`/projects/${id}/flova/actions/resume`, { task_id, action_id, option_id }),
     flovaResources: (id: string) => request<{ items: Array<{ resource_id: string; name?: string; media_type?: string; status?: string }>; unparsed: boolean }>(`/projects/${id}/flova/resources`, {}),
     flovaPullResource: (id: string, resource_id: string) => request(`/projects/${id}/flova/resources/pull`, { resource_id }),
     flovaApprove: (id: string, task_id: string) => request(`/projects/${id}/flova/approve`, { task_id }),

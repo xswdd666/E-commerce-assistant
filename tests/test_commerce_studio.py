@@ -423,6 +423,43 @@ class CommerceStudioTests(unittest.TestCase):
         flova_flow._apply_run_result(task, {"status": "failed", "terminal": True, "stream_chat_id": "failed-run", "pending_actions": []})
         self.assertEqual(task["status"], "失败")
 
+    def test_flova_pending_action_keeps_decision_and_resumes_same_task(self):
+        action = {"action_id": "action-1", "type": "batch_task_limit", "blocking": True,
+                  "message": "确认花费", "resume_message_id": "message-1", "payload": {"credits": 120},
+                  "options": [{"id": "confirm", "effect": "resume"}, {"id": "cancel", "effect": "none"}]}
+        self.project["external"]["flova_project_id"] = "remote-project"
+        task = {"id": "local-task", "provider": "Flova", "kind": "video", "status": "远端运行中",
+                "input_snapshot": {"flova_project_id": "remote-project"}}
+        self.project["tasks"].append(task)
+        flova_flow._apply_run_result(task, {"status": "completed", "terminal": True, "stream_chat_id": "stream-1", "pending_actions": [action]})
+        self.assertEqual(task["pending_actions"][0]["payload"], {"credits": 120})
+        self.assertEqual(task["status"], "待用户确认")
+        self.store.save(self.project)
+        with patch.object(flova_flow.flova, "pending_actions", return_value={"pending_actions": [action]}), patch.object(flova_flow.threading, "Thread"):
+            with self.assertRaisesRegex(ValueError, "请选择"):
+                flova_flow.resume_action(self.store, self.project, task["id"], "action-1", "cancel")
+            flova_flow.resume_action(self.store, self.project, task["id"], "action-1", "confirm")
+        self.assertEqual(task["status"], "已排队")
+        with patch.object(flova_flow.flova, "invoke", return_value={"status": "completed", "terminal": True, "stream_chat_id": "stream-2", "pending_actions": []}) as remote:
+            flova_flow._resume_worker(self.store, self.project["id"], task["id"], "action-1", "message-1", "confirm")
+        remote.assert_called_once_with("run", "resume", "remote-project", "--message-id", "message-1", "--action-id", "action-1", "--option", "confirm")
+        self.assertEqual(self.store.load(self.project["id"])["tasks"][0]["status"], "待审核")
+
+    def test_flova_resume_rejects_changed_action_before_remote_write(self):
+        action = {"action_id": "action-1", "type": "batch_task_limit", "blocking": True,
+                  "resume_message_id": "message-1", "payload": {"credits": 120},
+                  "options": [{"id": "confirm", "effect": "resume"}]}
+        self.project["external"]["flova_project_id"] = "remote-project"
+        task = {"id": "local-task", "provider": "Flova", "status": "待用户确认", "remote_id": "stream-1",
+                "input_snapshot": {"flova_project_id": "remote-project"}, "pending_actions": [action]}
+        self.project["tasks"].append(task)
+        changed = {**action, "payload": {"credits": 240}}
+        with patch.object(flova_flow.flova, "pending_actions", return_value={"pending_actions": [changed]}), patch.object(flova_flow.flova, "invoke") as remote:
+            with self.assertRaisesRegex(ValueError, "已变化"):
+                flova_flow.resume_action(self.store, self.project, task["id"], "action-1", "confirm")
+        remote.assert_not_called()
+        self.assertEqual(task["status"], "待用户确认")
+
     def test_flova_export_requires_review_and_keeps_final_video_local(self):
         self.approved_project()
         self.project["external"]["flova_project_id"] = "remote-project"
