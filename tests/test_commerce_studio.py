@@ -682,7 +682,7 @@ class CommerceStudioTests(unittest.TestCase):
 
     def test_delivery_package_contains_video_gallery_and_provenance(self):
         self.approved_project()
-        fields = {"product": "白色杯体", "scene": "厨房", "composition": "居中", "lighting": "日光", "negative": "结构不变", "ratio": "1:1"}
+        fields = {"product": "白色杯体", "scene": "厨房", "composition": "居中", "lighting": "日光", "style": "真实摄影", "negative": "结构不变", "purpose": "商品详情页", "ratio": "1:1"}
         version = prompts.save_version(self.store, self.project, fields)
         gpt_image = io.BytesIO()
         Image.new("RGB", (64, 64), "white").save(gpt_image, format="PNG")
@@ -1026,7 +1026,7 @@ class CommerceStudioTests(unittest.TestCase):
     def test_structured_prompt_change_locks_other_fields_and_adopts_reviewed_preview(self):
         self.approved_project()
         fields = {"product": "白色外观", "scene": "厨房台面", "composition": "产品居中", "lighting": "柔和日光",
-                  "negative": "不得改变杯体结构", "ratio": "1:1"}
+                  "style": "真实摄影", "negative": "不得改变杯体结构", "purpose": "商品详情页", "ratio": "1:1"}
         original = prompts.save_version(self.store, self.project, fields)
         offer = prompts.change_quote(self.project, original["id"], ["scene"], "只改成卧室场景")
         ai = {"id": "deepseek-remote", "text": json.dumps({"changes": [{"scene": "卧室床头"}, {"scene": "卧室书桌"}]}, ensure_ascii=False), "usage": {}}
@@ -1037,6 +1037,9 @@ class CommerceStudioTests(unittest.TestCase):
         versions = self.project["prompt_versions"][-2:]
         self.assertEqual([v["fields"]["scene"] for v in versions], ["卧室床头", "卧室书桌"])
         self.assertTrue(all(v["fields"]["product"] == fields["product"] and v["fields"]["negative"] == fields["negative"] for v in versions))
+        self.assertTrue(all(v["fields"]["style"] == fields["style"] and v["fields"]["purpose"] == fields["purpose"] for v in versions))
+        self.assertIn("目标用途：商品详情页", versions[0]["text"])
+        self.assertIn("风格：真实摄影", versions[0]["text"])
         reference_id = self.project["master_versions"][-1]["asset_ids"][0]
         preview_quote = prompts.preview_quote(self.store, self.project, versions[0]["id"], reference_id)
         with patch.object(prompts, "provider_key", return_value="test-key"), patch.object(prompts.seeany, "upload_image", return_value="https://seeany.com/upload"), patch.object(prompts.seeany, "submit", return_value={"data": {"task_uuid": "seeany-preview"}}) as submit:
@@ -1053,7 +1056,7 @@ class CommerceStudioTests(unittest.TestCase):
 
     def test_imported_gpt_image_keeps_actual_prompt_and_requires_review(self):
         original = self.approved_project()
-        fields = {"product": "白色杯体", "scene": "厨房", "composition": "居中", "lighting": "日光", "negative": "结构不变", "ratio": "1:1"}
+        fields = {"product": "白色杯体", "scene": "厨房", "composition": "居中", "lighting": "日光", "style": "真实摄影", "negative": "结构不变", "purpose": "商品详情页", "ratio": "1:1"}
         version = prompts.save_version(self.store, self.project, fields)
         reference_id = self.project["master_versions"][-1]["asset_ids"][0]
         image = io.BytesIO()

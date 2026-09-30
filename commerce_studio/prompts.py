@@ -15,7 +15,7 @@ from .core import fingerprint, ident, stamp
 from .service import provider_key
 
 
-TEXT_FIELDS = ("product", "scene", "composition", "lighting", "negative")
+TEXT_FIELDS = ("product", "scene", "composition", "lighting", "style", "negative", "purpose")
 RATIOS = {"1:1", "3:4", "4:3", "9:16", "16:9", "3:2", "2:3"}
 
 
@@ -46,7 +46,8 @@ def _clean(fields):
 
 def render(fields):
     return (f"产品特征：{fields['product']}\n场景：{fields['scene']}\n构图：{fields['composition']}\n"
-            f"光线：{fields['lighting']}\n禁止变化：{fields['negative']}\n"
+            f"光线：{fields['lighting']}\n风格：{fields['style']}\n画幅：{fields['ratio']}\n"
+            f"目标用途：{fields['purpose']}\n禁止变化：{fields['negative']}\n"
             "仅依据已确认产品事实表达卖点；不要把推断结构写成真实规格；不要生成可读文字。")
 
 

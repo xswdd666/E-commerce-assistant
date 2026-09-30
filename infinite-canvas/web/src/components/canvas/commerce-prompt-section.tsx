@@ -5,9 +5,9 @@ import { studioApi, type PromptFields, type StudioProject, type StudioQuote } fr
 
 type Props = { project: StudioProject; busy: boolean; act: (operation: () => Promise<unknown>) => Promise<void>; onInsertImage: (dataUrl: string, title: string, commerceImage?: { projectId: string; sourceId: string; masterVersionId: string }, commercePromptImage?: { projectId: string; sourceId: string; versionId: string }) => Promise<void>; onInsertText: (text: string, title: string, source?: { projectId: string; kind: "prompt"; versionId: string; parentVersionId: string | null }) => void };
 const FIELD_LABELS: Record<Exclude<keyof PromptFields, "ratio">, string> = {
-    product: "产品特征", scene: "场景", composition: "构图", lighting: "光线", negative: "禁止变化项",
+    product: "产品特征", scene: "场景", composition: "构图", lighting: "光线", style: "风格", negative: "禁止变化项", purpose: "目标用途",
 };
-const EMPTY: PromptFields = { product: "", scene: "", composition: "", lighting: "", negative: "", ratio: "1:1" };
+const EMPTY: PromptFields = { product: "", scene: "", composition: "", lighting: "", style: "真实商品广告摄影", negative: "", purpose: "商品详情页", ratio: "1:1" };
 const RATIOS = ["1:1", "3:4", "4:3", "9:16", "16:9", "3:2", "2:3"];
 
 export function CommercePromptSection({ project, busy, act, onInsertImage, onInsertText }: Props) {
@@ -55,7 +55,7 @@ export function CommercePromptSection({ project, busy, act, onInsertImage, onIns
 
     return <section>
         <Typography.Title level={5}>提示词方向与单张试图</Typography.Title>
-        <Typography.Paragraph type="secondary">五个字段分别编辑。修改产生新版本；DeepSeek 每轮给出 2 至 3 个方向，用户逐个查看费用后再单张试图。</Typography.Paragraph>
+        <Typography.Paragraph type="secondary">产品、场景、构图、光线、风格、画幅、禁止变化项及目标用途分别编辑。修改产生新版本；DeepSeek 每轮给出 2 至 3 个方向，用户逐个查看费用后再单张试图。</Typography.Paragraph>
         {project.prompt_versions.length ? <Select className="w-full" value={selectedId} onChange={choose} options={project.prompt_versions.map((version, index) => ({ value: version.id, label: `${index + 1}. ${version.origin} · ${version.fields.scene.slice(0, 18)}` }))} /> : null}
         {selected && !current ? <Typography.Paragraph type="warning">此提示词依据旧简报或母版；请保存基于当前输入的新版本。</Typography.Paragraph> : null}
         <Space direction="vertical" className="mt-2 w-full">
