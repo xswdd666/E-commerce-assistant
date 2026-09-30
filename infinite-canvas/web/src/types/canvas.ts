@@ -88,6 +88,17 @@ export type CanvasNodeMetadata = {
     commerceImage?: { projectId: string; sourceId: string; masterVersionId: string; originalStorageKey?: string };
     commercePromptImage?: { projectId: string; sourceId: string; versionId: string; originalStorageKey?: string };
     commercePreview?: { projectId: string; taskId: string; sourceId: string; configNodeId: string; originalStorageKey?: string };
+    workflowSourceId?: string;
+    workflowTaskId?: string;
+    workflowVersionId?: string;
+    workflowDraft?: string;
+    workflowView?: string;
+    workflowRatio?: string;
+    workflowDecision?: "采用" | "废图";
+    workflowPrompt?: string;
+    workflowReferenceIds?: string[];
+    workflowModel?: string;
+    workflowInferred?: boolean;
     groupId?: string;
     interactive?: boolean; // Plugin node interaction/move state; see CanvasNodeDefinition.interactionToggle.
 };
@@ -106,6 +117,8 @@ export type CanvasConnection = {
     id: string;
     fromNodeId: string;
     toNodeId: string;
+    targetPort?: "image" | "product_details" | "prompt" | "text";
+    selectedVersionId?: string;
 };
 
 export type CanvasAssistantReference = {

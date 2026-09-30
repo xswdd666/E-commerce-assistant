@@ -58,11 +58,14 @@ class Store:
         if not isinstance(name, str) or not name.strip():
             raise ValueError("请输入项目名称")
         project = {"id": ident(), "organization_id": "local", "name": name.strip(), "created": stamp(),
+                   "archived_at": None,
                    "updated": stamp(), "sources": [], "facts": [], "brief_versions": [], "master_versions": [],
                    "directions": [], "direction_approval": None, "script_versions": [], "script_approval": None,
                    "storyboard_versions": [], "storyboard_approval": None, "external": {"flova_project_id": "", "flova_project_url": ""},
                    "gallery_versions": [], "gallery_approval": None, "gallery_choices": {}, "gallery_reviews": [],
                    "prompt_versions": [], "prompt_adoption": None, "prompt_reviews": [],
+                   "workflow_versions": [],
+                   "workflow_reviews": [],
                    "canvas_preview_reviews": [], "canvas_preview_adoption": {},
                    "image_observations": [],
                    "jev_observations": [],
@@ -72,7 +75,7 @@ class Store:
         return project
 
     def list(self):
-        return [{"id": p["id"], "name": p["name"], "updated": p["updated"], "legacy_id": p.get("legacy_id")}
+        return [{"id": p["id"], "name": p["name"], "updated": p["updated"], "legacy_id": p.get("legacy_id"), "archived_at": p.get("archived_at")}
                 for path in self.root.glob("*.json")
                 if (p := json.loads(path.read_text(encoding="utf-8")))]
 
@@ -92,7 +95,7 @@ class Store:
             for kind, value in fields:
                 if isinstance(value, str) and needle in value.casefold():
                     matches.append({"project_id": project["id"], "project_name": project["name"], "kind": kind,
-                                    "text": value[:160], "updated": project["updated"]})
+                                    "text": value[:160], "updated": project["updated"], "archived_at": project.get("archived_at")})
                     if len(matches) >= 100:
                         return matches
         return matches
@@ -122,6 +125,8 @@ class Store:
             project.setdefault("gallery_choices", {})
             project.setdefault("gallery_reviews", [])
             project.setdefault("prompt_versions", [])
+            project.setdefault("workflow_versions", [])
+            project.setdefault("workflow_reviews", [])
             project.setdefault("prompt_adoption", None)
             project.setdefault("prompt_reviews", [])
             project.setdefault("canvas_preview_reviews", [])
@@ -134,9 +139,19 @@ class Store:
             project.setdefault("costs", [])
             project.setdefault("cost_target", None)
             project.setdefault("jev_observations", [])
+            project.setdefault("archived_at", None)
             return project
         except FileNotFoundError as exc:
             raise ValueError("项目不存在") from exc
+
+    def set_archived(self, project_id, archived):
+        if not isinstance(archived, bool):
+            raise ValueError("归档状态无效")
+        with self.lock:
+            project = self.load(project_id)
+            project["archived_at"] = stamp() if archived else None
+            self.save(project)
+            return project
 
     def save(self, project):
         with self.lock:

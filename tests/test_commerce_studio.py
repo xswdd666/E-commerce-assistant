@@ -104,6 +104,19 @@ class CommerceStudioTests(unittest.TestCase):
         self.assertEqual(self.store.load(other["id"])["name"], "保留项目")
         self.assertTrue(self.store.delete(self.project["id"])["already_missing"])
 
+    def test_archive_keeps_project_files_search_and_backup_available(self):
+        source = self.store.add_source(self.project, "银色正面.png", "image/png", base64.b64encode(b"image").decode())
+        archived = self.store.set_archived(self.project["id"], True)
+        self.assertTrue(archived["archived_at"])
+        self.assertEqual(self.store.list()[0]["archived_at"], archived["archived_at"])
+        self.assertEqual(self.store.search("银色")[0]["archived_at"], archived["archived_at"])
+        self.assertEqual(self.store.source_bytes(self.store.load(self.project["id"]), source["id"])[1], b"image")
+        with zipfile.ZipFile(io.BytesIO(backup.export_project(self.store, archived))) as archive:
+            self.assertEqual(json.loads(archive.read("project.json"))["archived_at"], archived["archived_at"])
+        self.assertIsNone(self.store.set_archived(self.project["id"], False)["archived_at"])
+        with self.assertRaisesRegex(ValueError, "归档状态"):
+            self.store.set_archived(self.project["id"], "yes")
+
     def test_deepseek_extraction_is_reviewed_before_brief(self):
         source = self.store.add_source(self.project, "merchant.txt", "text/plain", base64.b64encode("杯体为白色".encode()).decode())
         offer = service.facts_quote(self.project, {"source_id": source["id"]})

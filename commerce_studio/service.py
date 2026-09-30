@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def provider_key(name):
     if name in os.environ:
         return os.environ[name]
-    path = ROOT / ".env"
+    path = Path(os.environ.get("COMMERCE_STUDIO_ENV_FILE") or ROOT / ".env")
     if path.exists():
         for line in path.read_text(encoding="utf-8-sig").splitlines():
             key, separator, value = line.partition("=")
@@ -506,6 +506,13 @@ def sync(store, project, task_id):
                     source["origin"] = "SeeAny prompt preview"
                     source["prompt_version_id"] = task["input_snapshot"]["version_id"]
                     source["reference_ids"] = [task["input_snapshot"]["reference_id"]]
+                elif task.get("kind") in ("workflow_image", "workflow_views"):
+                    source["origin"] = "SeeAny workflow result"
+                    source["canvas_node_id"] = task["node_id"]
+                    source["task_id"] = task["id"]
+                    source["reference_ids"] = [i["source_id"] for i in task["input_snapshot"]["inputs"] if i["port"] == "image"]
+                    source["view_label"] = task["input_snapshot"].get("view")
+                    source["inferred"] = task.get("kind") == "workflow_views"
                 task["asset_ids"].append(source["id"])
                 task["imported_urls"].append(url)
                 store.save(project)

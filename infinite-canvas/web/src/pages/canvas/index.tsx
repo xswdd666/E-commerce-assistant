@@ -24,7 +24,7 @@ export default function CanvasPage() {
     const [searchParams] = useSearchParams();
     const [query, setQuery] = useState("");
     const [searching, setSearching] = useState(false);
-    const [results, setResults] = useState<Array<{ project_id: string; project_name: string; kind: string; text: string; canvasId?: string }>>([]);
+    const [results, setResults] = useState<Array<{ project_id: string; project_name: string; kind: string; text: string; archived_at: string | null; canvasId?: string }>>([]);
     const inputRef = useRef<HTMLInputElement>(null);
     const autoOpenRef = useRef(false);
     const hydrated = useCanvasStore((state) => state.hydrated);
@@ -158,7 +158,7 @@ export default function CanvasPage() {
 
                 <section>
                     <div className="flex gap-2"><Input value={query} onChange={(event) => setQuery(event.target.value)} onPressEnter={() => void searchCommerce()} placeholder="搜索商品项目、素材或提示词" /><Button loading={searching} onClick={() => void searchCommerce()}>搜索</Button></div>
-                    {results.length ? <div className="mt-3 space-y-2">{results.map((item, index) => <div key={`${item.project_id}-${item.kind}-${index}`} className="flex items-start justify-between gap-3 border-b border-stone-200 py-2 text-sm dark:border-stone-800"><div><span className="font-medium">{item.project_name}</span> · {item.kind}<div className="max-w-3xl break-words text-stone-500">{item.text}</div></div>{item.canvasId ? <Button type="link" onClick={() => enterProject(item.canvasId!)}>打开画布</Button> : <span className="text-stone-500">无关联画布</span>}</div>)}</div> : null}
+                    {results.length ? <div className="mt-3 space-y-2">{results.map((item, index) => <div key={`${item.project_id}-${item.kind}-${index}`} className="flex items-start justify-between gap-3 border-b border-stone-200 py-2 text-sm dark:border-stone-800"><div><span className="font-medium">{item.project_name}</span> · {item.kind}{item.archived_at ? " · 已归档" : ""}<div className="max-w-3xl break-words text-stone-500">{item.text}</div></div>{item.canvasId ? <Button type="link" onClick={() => enterProject(item.canvasId!)}>打开画布</Button> : <span className="text-stone-500">无关联画布</span>}</div>)}</div> : null}
                 </section>
 
                 {!hydrated ? (

@@ -72,6 +72,8 @@ import {
 } from "@/lib/canvas/canvas-generation-helpers";
 import { getNodeDefinition, isBuiltinNodeType as isBuiltinType, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
 import { registerBuiltinNodes } from "@/components/canvas/nodes/builtin-nodes";
+import { registerCommerceWorkflowNodes } from "@/components/canvas/nodes/commerce-workflow-nodes";
+import { isWorkflowNode, workflowConnection } from "@/lib/canvas/commerce-workflow-graph";
 import { CanvasPluginManagerModal } from "@/components/canvas/canvas-plugin-manager-modal";
 import { CanvasRefreshShell } from "@/components/canvas/canvas-refresh-shell";
 import { CanvasTopBar } from "@/components/canvas/canvas-top-bar";
@@ -101,6 +103,7 @@ import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
 // Register built-in nodes in the shared registry once when the module loads.
 registerBuiltinNodes();
+registerCommerceWorkflowNodes();
 
 type CanvasClipboard = {
     nodes: CanvasNodeData[];
@@ -227,6 +230,14 @@ function InfiniteCanvasPage() {
     const { token: statusColors } = antdTheme.useToken();
     const [nodes, setNodes] = useState<CanvasNodeData[]>([]);
     const [connections, setConnections] = useState<CanvasConnection[]>([]);
+    useEffect(() => {
+        const selectVersion = (event: Event) => {
+            const detail = (event as CustomEvent<{ edgeId: string; versionId: string }>).detail;
+            setConnections((current) => current.map((edge) => edge.id === detail.edgeId ? { ...edge, selectedVersionId: detail.versionId || undefined } : edge));
+        };
+        window.addEventListener("commerce-workflow-select-version", selectVersion);
+        return () => window.removeEventListener("commerce-workflow-select-version", selectVersion);
+    }, []);
     const [chatSessions, setChatSessions] = useState<CanvasAssistantSession[]>([]);
     const [activeChatId, setActiveChatId] = useState<string | null>(null);
     const [viewport, setViewport] = useState<ViewportTransform>({ x: 0, y: 0, k: 1 });
@@ -694,7 +705,11 @@ function InfiniteCanvasPage() {
         (current: ConnectionHandle, targetNodeId: string) => {
             if (current.nodeId === targetNodeId) return;
 
-            const connection = normalizeConnection(current.nodeId, targetNodeId, nodesRef.current, current.handleType);
+            const firstNode = nodesRef.current.find((node) => node.id === current.nodeId);
+            const secondNode = nodesRef.current.find((node) => node.id === targetNodeId);
+            const connection = (isWorkflowNode(firstNode) || isWorkflowNode(secondNode)) && current.handleType === "target"
+                ? normalizeConnection(targetNodeId, current.nodeId, nodesRef.current, "source")
+                : normalizeConnection(current.nodeId, targetNodeId, nodesRef.current, current.handleType);
             if (!connection) {
                 message.warning(t("canvas.projectPage.configConnection"));
                 return;
@@ -702,7 +717,17 @@ function InfiniteCanvasPage() {
             const { fromNodeId, toNodeId } = connection;
             const exists = connectionsRef.current.some((conn) => conn.fromNodeId === fromNodeId && conn.toNodeId === toNodeId);
             if (!exists) {
-                setConnections((prev) => [...prev, { id: `conn-${Date.now()}`, fromNodeId, toNodeId }]);
+                const from = nodesRef.current.find((node) => node.id === fromNodeId);
+                const to = nodesRef.current.find((node) => node.id === toNodeId);
+                if (!from || !to) return;
+                if (isWorkflowNode(from) || isWorkflowNode(to)) {
+                    const verdict = workflowConnection(from, to, connectionsRef.current);
+                    if ("error" in verdict) { message.warning(verdict.error); return; }
+                    setConnections((prev) => [...prev, { id: nanoid(), fromNodeId, toNodeId, targetPort: verdict.port,
+                        selectedVersionId: from.metadata?.workflowVersionId }]);
+                } else {
+                    setConnections((prev) => [...prev, { id: nanoid(), fromNodeId, toNodeId }]);
+                }
             }
             setContextMenu(null);
         },
@@ -716,6 +741,10 @@ function InfiniteCanvasPage() {
             const connection = normalizeConnection(pending.connection.nodeId, newNode.id, [...nodesRef.current, newNode], pending.connection.handleType);
             if (!connection) {
                 message.warning(t("canvas.projectPage.configConnection"));
+                return;
+            }
+            if (isWorkflowNode(nodesRef.current.find((node) => node.id === pending.connection.nodeId))) {
+                message.warning("业务节点只能连接兼容的业务端口");
                 return;
             }
             setNodes((prev) => [...prev, newNode]);

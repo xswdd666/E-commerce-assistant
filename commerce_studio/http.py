@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from .core import Store
-from . import backup, delivery, finishing, flova_flow, gallery, jev, legacy, observations, prompts, service, video_export
+from . import backup, delivery, finishing, flova_flow, gallery, jev, legacy, observations, prompts, service, video_export, workflow
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -21,6 +21,7 @@ MAX_BODY = 35 * 1024 * 1024
 ALLOWED_ORIGINS = frozenset({
     "http://127.0.0.1:3000", "http://localhost:3000",
     "http://127.0.0.1:5173", "http://localhost:5173",
+    "http://127.0.0.1:3001", "http://localhost:3001",
 })
 
 
@@ -123,6 +124,8 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("接口不存在")
         if method == "POST" and parts[3:] == ["delete"]:
             return STORE.delete(parts[2])
+        if method == "POST" and parts[3:] == ["archive"]:
+            return STORE.set_archived(parts[2], self._body().get("archived"))
         project = STORE.load(parts[2])
         if method == "GET" and len(parts) == 3:
             return project
@@ -135,6 +138,14 @@ class Handler(BaseHTTPRequestHandler):
                 project = STORE.load(parts[2])
                 if parts[3:] == ["sources"]:
                     return STORE.add_source(project, body.get("name"), body.get("mime"), body.get("base64"))
+                if parts[3:] == ["workflow", "quote"]:
+                    return workflow.quote(STORE, project, body)
+                if parts[3:] == ["workflow", "run"]:
+                    return workflow.run(STORE, project, body)
+                if parts[3:] == ["workflow", "confirm"]:
+                    return workflow.confirm(STORE, project, body)
+                if parts[3:] == ["workflow", "review"]:
+                    return workflow.review(STORE, project, body)
                 if parts[3:] == ["facts"]:
                     return STORE.add_fact(project, body.get("field"), body.get("value"), body.get("source_id"), body.get("status", "待核实"))
                 if len(parts) == 6 and parts[3] == "facts" and parts[5] == "review":

@@ -45,26 +45,42 @@ def ensure_dependencies():
 
 def main():
     clear_unusable_proxy()
+    if not os.environ.get("COMMERCE_STUDIO_ENV_FILE"):
+        try:
+            common_git = subprocess.check_output(
+                ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                cwd=ROOT,
+                text=True,
+                encoding="utf-8",
+            ).strip()
+            main_env = Path(common_git).parent / ".env"
+            if main_env.is_file():
+                os.environ["COMMERCE_STUDIO_ENV_FILE"] = str(main_env)
+        except (OSError, ValueError, subprocess.CalledProcessError):
+            pass
     ensure_dependencies()
     from .http import Handler, STORE
 
-    server = ThreadingHTTPServer(("127.0.0.1", 8766), Handler)
+    api_port = int(os.environ.get("COMMERCE_STUDIO_PORT", "8766"))
+    web_port = int(os.environ.get("CANVAS_WEB_PORT", "3000"))
+    os.environ["VITE_STUDIO_API_PORT"] = str(api_port)
+    server = ThreadingHTTPServer(("127.0.0.1", api_port), Handler)
     STORE.reconcile_interrupted_tasks()
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    frontend = subprocess.Popen(["npm.cmd", "run", "dev", "--", "--host", "127.0.0.1", "--strictPort"], cwd=WEB)
+    frontend = subprocess.Popen(["npm.cmd", "run", "dev", "--", "--host", "127.0.0.1", "--port", str(web_port), "--strictPort"], cwd=WEB)
     try:
         for _ in range(80):
             if frontend.poll() is not None:
                 raise SystemExit("画布启动失败，请检查终端输出")
             try:
-                with urlopen("http://127.0.0.1:3000", timeout=1):
+                with urlopen(f"http://127.0.0.1:{web_port}", timeout=1):
                     break
             except (URLError, TimeoutError):
                 time.sleep(0.25)
         else:
-            raise SystemExit("画布启动超时，请检查端口 3000")
-        print("广告电商工作台已启动：http://127.0.0.1:3000/canvas")
-        webbrowser.open("http://127.0.0.1:3000/canvas")
+            raise SystemExit(f"画布启动超时，请检查端口 {web_port}")
+        print(f"广告电商工作台已启动：http://127.0.0.1:{web_port}/canvas")
+        webbrowser.open(f"http://127.0.0.1:{web_port}/canvas")
         frontend.wait()
     finally:
         if frontend.poll() is None:

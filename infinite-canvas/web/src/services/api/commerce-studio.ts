@@ -1,4 +1,4 @@
-const BASE = "http://127.0.0.1:8766/api";
+const BASE = `http://127.0.0.1:${import.meta.env.VITE_STUDIO_API_PORT || "8766"}/api`;
 
 export type StudioSource = { id: string; name: string; mime: string; bytes: number; extracted_text?: string; parse_status?: string; origin?: string; import_prompt?: string; candidate_group?: number; view_label?: string; reference_ids?: string[]; gallery_plan_id?: string; gallery_item_id?: string; prompt_version_id?: string };
 export type StudioFact = { id: string; field: string; value: string; source_id?: string; status: "待核实" | "已知事实" | "创意假设" };
@@ -15,6 +15,7 @@ export type StudioProject = {
     id: string;
     restored_from?: string;
     name: string;
+    archived_at?: string | null;
     legacy_import?: { id: string; imported_at: string; review_required: string; archive: unknown };
     sources: StudioSource[];
     facts: StudioFact[];
@@ -33,6 +34,8 @@ export type StudioProject = {
     gallery_choices: Record<string, string>;
     gallery_reviews: Array<{ id: string; item_id: string; source_id: string; decision: string; reason: string }>;
     prompt_versions: PromptVersion[];
+    workflow_versions?: Array<{ id: string; node_id: string; kind: string; text: string; fields?: WorkflowField[]; created: string }>;
+    workflow_reviews?: Array<{ id: string; task_id: string; source_id: string; decision: "采用" | "废图"; created: string }>;
     prompt_adoption: { version_id: string; source_id: string; review_id: string } | null;
     prompt_reviews: Array<{ id: string; version_id: string; source_id: string; decision: string; reason: string }>;
     canvas_preview_reviews: Array<{ id: string; task_id: string; source_id: string; node_id: string; decision: string; reason: string }>;
@@ -44,12 +47,14 @@ export type StudioProject = {
     costs: StudioCost[];
     cost_target: { amount: number; currency: string } | null;
     external: { flova_project_id: string; flova_project_url: string };
-    tasks: Array<{ id: string; provider: string; kind?: string; node_id?: string; status: string; remote_id?: string | null; estimate: number | null; actual: number | null; candidate_group?: number; view_label?: string; asset_ids?: string[]; source_id?: string; automatic_retry?: boolean; auto_retries_remaining?: number; attempts?: number; input_snapshot?: { item?: { id: string }; version_id?: string; shot_id?: string; storyboard_id?: string; config_node_id?: string; brief_id?: string; master_id?: string; prompt?: string; reference_node_id?: string; connection_ids?: string[]; reference_sha256?: string }; error?: string; interrupted_at?: string; manual_resolution?: { outcome: string; note: string; at: string }; pending_actions?: FlovaPendingAction[] }>;
+    tasks: Array<{ id: string; provider: string; model?: string; kind?: string; node_id?: string; status: string; remote_id?: string | null; estimate: number | null; actual: number | null; candidate_group?: number; view_label?: string; asset_ids?: string[]; source_id?: string; automatic_retry?: boolean; auto_retries_remaining?: number; attempts?: number; candidates?: WorkflowField[]; candidate_text?: string; provider_response_text?: string; provider_request?: { prompt?: string; mode?: string; size?: string; imgRatio?: string; views?: string }; input_snapshot?: { item?: { id: string }; version_id?: string; shot_id?: string; storyboard_id?: string; config_node_id?: string; brief_id?: string; master_id?: string; prompt?: string; reference_node_id?: string; connection_ids?: string[]; reference_sha256?: string; inputs?: Array<{ edge_id: string; node_id: string; port: string; version_id?: string; source_id?: string; sha256?: string; text?: string }> }; error?: string; interrupted_at?: string; manual_resolution?: { outcome: string; note: string; at: string }; pending_actions?: FlovaPendingAction[] }>;
     chat: Array<{ id: string; prompt: string; reply: string; brief_id?: string; created: string }>;
 };
 
 export type MasterRequest = { group: number; view_label: string; views: string; source_id: string };
 export type StudioQuote = { fingerprint: string; estimate: number | null; currency?: string | null; pricing_source: string; input_snapshot: unknown };
+export type WorkflowField = { field: string; value: string; status: "待核实" | "已知事实" | "创意假设"; source_id?: string; candidate_task_id?: string };
+export type WorkflowGraph = { nodes: Array<{ id: string; kind: string; source_id?: string; draft?: string; view?: string; ratio?: string }>; edges: Array<{ id: string; fromNodeId: string; toNodeId: string; targetPort?: string; selectedVersionId?: string }> };
 export type PreviewRequest = { canvas_project_id: string; config_node_id: string; reference_node_id: string; connection_ids: string[]; prompt: string; ratio: string; reference_data_url: string };
 export type FlovaCanvasContext = { canvas_project_id: string; config_node_id: string; connection_ids: string[]; prompt: string; reference_images: Array<{ node_id: string; sha256: string }>; reference_media: Array<{ node_id: string; source_id: string; sha256: string; kind: "video" | "audio" }> };
 
@@ -65,13 +70,18 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
 }
 
 export const studioApi = {
+    workflowQuote: (id: string, node_id: string, graph: WorkflowGraph) => request<StudioQuote>(`/projects/${id}/workflow/quote`, { node_id, graph }),
+    workflowRun: (id: string, node_id: string, graph: WorkflowGraph, approved_fingerprint: string, request_id: string) => request<StudioProject["tasks"][number]>(`/projects/${id}/workflow/run`, { node_id, graph, approved_fingerprint, request_id }),
+    workflowConfirm: (id: string, body: { node_id: string; kind: string; text?: string; fields?: WorkflowField[]; candidate_task_id?: string }) => request<NonNullable<StudioProject["workflow_versions"]>[number]>(`/projects/${id}/workflow/confirm`, body),
+    workflowReview: (id: string, task_id: string, source_id: string, decision: "采用" | "废图") => request(`/projects/${id}/workflow/review`, { task_id, source_id, decision }),
     health: () => request<{ ok: boolean; deepseek: boolean; seeany: boolean; flova: boolean; jev: boolean }>("/health"),
     legacyProjects: () => request<Array<{ id: string; name: string; sources: number; facts: number }>>("/legacy/projects"),
     legacyImport: (id: string) => request<StudioProject>("/legacy/import", { id }),
-    search: (query: string) => request<Array<{ project_id: string; project_name: string; kind: string; text: string; updated: string }>>(`/search?q=${encodeURIComponent(query)}`),
+    search: (query: string) => request<Array<{ project_id: string; project_name: string; kind: string; text: string; updated: string; archived_at: string | null }>>(`/search?q=${encodeURIComponent(query)}`),
     create: (name: string) => request<StudioProject>("/projects", { name }),
     get: (id: string) => request<StudioProject>(`/projects/${id}`),
     delete: (id: string) => request<{ deleted_id: string }>(`/projects/${id}/delete`, {}),
+    archive: (id: string, archived: boolean) => request<StudioProject>(`/projects/${id}/archive`, { archived }),
     source: (id: string, file: File) =>
         new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
