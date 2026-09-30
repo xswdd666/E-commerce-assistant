@@ -188,7 +188,7 @@ class Handler(BaseHTTPRequestHandler):
                 if parts[3:] == ["flova", "attach"]:
                     return flova_flow.attach_project(STORE, project, body.get("project_id"))
                 if parts[3:] == ["flova", "quote"]:
-                    return flova_flow.quote(project)
+                    return flova_flow.quote(project, body.get("canvas_context"))
                 if parts[3:] == ["flova", "shots", "quote"]:
                     return flova_flow.shot_quote(project, body.get("shot_id"))
                 if parts[3:] == ["flova", "shots", "run"]:

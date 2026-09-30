@@ -3,7 +3,7 @@ import { Button, Drawer, Input, Select, Space, Tag, Typography } from "antd";
 import localforage from "localforage";
 import { saveAs } from "file-saver";
 
-import { studioApi, type MasterRequest, type PreviewRequest, type StudioFact, type StudioProject, type StudioQuote } from "@/services/api/commerce-studio";
+import { studioApi, type FlovaCanvasContext, type MasterRequest, type PreviewRequest, type StudioFact, type StudioProject, type StudioQuote } from "@/services/api/commerce-studio";
 import { buildNodeGenerationContext, hydrateNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import { CanvasNodeType } from "@/types/canvas";
 import { CommercePlanSection } from "@/components/canvas/commerce-plan-section";
@@ -46,6 +46,8 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
     const [chatQuote, setChatQuote] = useState<StudioQuote | null>(null);
     const [previewQuote, setPreviewQuote] = useState<StudioQuote | null>(null);
     const [previewRequest, setPreviewRequest] = useState<PreviewRequest | null>(null);
+    const [canvasFlovaOffer, setCanvasFlovaOffer] = useState<StudioQuote | null>(null);
+    const [canvasFlovaRequest, setCanvasFlovaRequest] = useState<FlovaCanvasContext | null>(null);
     const [previewRatio, setPreviewRatio] = useState("1:1");
     const [comparison, setComparison] = useState<{ original: string; generated: string } | null>(null);
     const [previewComparison, setPreviewComparison] = useState<{ taskId: string; original: string; generated: string } | null>(null);
@@ -54,7 +56,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
     const [resolvingTaskId, setResolvingTaskId] = useState<string | null>(null);
     const [resolutionNote, setResolutionNote] = useState("");
 
-    useEffect(() => { setPreviewQuote(null); setPreviewRequest(null); }, [nodes, connections, selectedNodeId, previewRatio]);
+    useEffect(() => { setPreviewQuote(null); setPreviewRequest(null); setCanvasFlovaOffer(null); setCanvasFlovaRequest(null); }, [nodes, connections, selectedNodeId, previewRatio]);
     useEffect(() => { if (project) onProjectChange(project); }, [project, onProjectChange]);
 
     useEffect(() => {
@@ -257,7 +259,24 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                             {selected ? <Typography.Paragraph className="mt-2">节点费用：{selectedCosts.length} 笔任务；已确认实付 {selectedSpend.size ? [...selectedSpend].map(([unit, amount]) => `${amount.toFixed(2)} ${unit}`).join("、") : "暂无"}；待结算 {selectedCosts.filter((cost) => cost.actual == null).length} 笔；预估未知 {selectedCosts.filter((cost) => cost.estimate == null).length} 笔。</Typography.Paragraph> : null}
                             <Typography.Paragraph type="secondary" className="mt-2">连线仅编辑画布。任务提交前需查看实际输入和费用；未知费用不会自动提交。</Typography.Paragraph>
                             {selected?.type === CanvasNodeType.Config ? <Space direction="vertical" className="mt-2 w-full">
-                                <Select value={previewRatio} onChange={setPreviewRatio} options={["1:1", "3:4", "4:3", "9:16", "16:9", "3:2", "2:3"].map((ratio) => ({ value: ratio, label: ratio }))} />
+                                {selected.metadata?.generationMode === "video" ? <>
+                                    <Button disabled={busy || !project.storyboard_approval} onClick={() => void act(async () => {
+                                        const context = await hydrateNodeGenerationContext(buildNodeGenerationContext(selected.id, nodes, connections, selected.metadata?.composerContent || selected.metadata?.prompt || ""));
+                                        if (context.referenceVideos.length || context.referenceAudios.length) throw new Error("Flova 画布入口尚不支持视频或音频参考连线，请先在 Flova 网页处理这些素材");
+                                        const request: FlovaCanvasContext = { canvas_project_id: canvasId, config_node_id: selected.id,
+                                            connection_ids: connections.filter((edge) => edge.toNodeId === selected.id).map((edge) => edge.id), prompt: context.prompt,
+                                            reference_images: await Promise.all(context.referenceImages.map(async (image) => ({ node_id: image.id,
+                                                sha256: [...new Uint8Array(await crypto.subtle.digest("SHA-256", await (await fetch(image.dataUrl)).arrayBuffer()))].map((byte) => byte.toString(16).padStart(2, "0")).join("") }))) };
+                                        setCanvasFlovaRequest(request);
+                                        setCanvasFlovaOffer(await studioApi.flovaQuote(project.id, request));
+                                    })}>按当前视频连线查看 Flova 输入</Button>
+                                    {canvasFlovaOffer && canvasFlovaRequest?.config_node_id === selected.id ? <div>
+                                        <Typography.Paragraph className="whitespace-pre-wrap">画布提示词：{canvasFlovaRequest.prompt}</Typography.Paragraph>
+                                        <Typography.Paragraph>连线 {canvasFlovaRequest.connection_ids.length} 条；母版参考图 {canvasFlovaRequest.reference_images.length} 张；已批准分镜 {String((canvasFlovaOffer.input_snapshot as { storyboard_id: string }).storyboard_id).slice(0, 12)}；费用：{canvasFlovaOffer.estimate == null ? "未知" : canvasFlovaOffer.estimate}</Typography.Paragraph>
+                                        <Button type="primary" disabled={busy} onClick={() => void act(async () => { await studioApi.flovaRun(project.id, canvasFlovaOffer.fingerprint, crypto.randomUUID(), canvasFlovaRequest); setCanvasFlovaOffer(null); setCanvasFlovaRequest(null); })}>确认按此画布输入提交 Flova 整片</Button>
+                                    </div> : null}
+                                </> : null}
+                                {selected.metadata?.generationMode !== "video" ? <><Select value={previewRatio} onChange={setPreviewRatio} options={["1:1", "3:4", "4:3", "9:16", "16:9", "3:2", "2:3"].map((ratio) => ({ value: ratio, label: ratio }))} />
                                 <Button disabled={busy || !project.master_versions.length} onClick={() => void act(async () => {
                                     const context = await hydrateNodeGenerationContext(buildNodeGenerationContext(selected.id, nodes, connections, selected.metadata?.composerContent || selected.metadata?.prompt || ""));
                                     if (context.referenceImages.length !== 1 || context.referenceVideos.length || context.referenceAudios.length) throw new Error("试图需要恰好一张连线参考图，暂不支持视频或音频输入");
@@ -267,7 +286,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                                     setPreviewRequest(request);
                                     setPreviewQuote(await studioApi.previewQuote(project.id, request));
                                 })}>按当前连线查看试图输入</Button>
-                                {previewQuote && previewRequest ? <><Typography.Paragraph className="whitespace-pre-wrap">提示词：{previewRequest.prompt}</Typography.Paragraph><Typography.Paragraph>参考图节点：{previewRequest.reference_node_id}；费用：{previewQuote.estimate == null ? "未知" : previewQuote.estimate}</Typography.Paragraph><Button type="primary" disabled={busy} onClick={() => void act(async () => { await studioApi.previewRun(project.id, { ...previewRequest, approved_fingerprint: previewQuote.fingerprint, request_id: crypto.randomUUID() }); setPreviewQuote(null); setPreviewRequest(null); })}>确认提交 SeeAny 单张试图</Button></> : null}
+                                {previewQuote && previewRequest ? <><Typography.Paragraph className="whitespace-pre-wrap">提示词：{previewRequest.prompt}</Typography.Paragraph><Typography.Paragraph>参考图节点：{previewRequest.reference_node_id}；费用：{previewQuote.estimate == null ? "未知" : previewQuote.estimate}</Typography.Paragraph><Button type="primary" disabled={busy} onClick={() => void act(async () => { await studioApi.previewRun(project.id, { ...previewRequest, approved_fingerprint: previewQuote.fingerprint, request_id: crypto.randomUUID() }); setPreviewQuote(null); setPreviewRequest(null); })}>确认提交 SeeAny 单张试图</Button></> : null}</> : null}
                             </Space> : null}
                         </section>
                         <section>

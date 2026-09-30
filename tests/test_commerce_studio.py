@@ -353,6 +353,43 @@ class CommerceStudioTests(unittest.TestCase):
             thread.assert_called_once()
         flova_flow.ACTIVE.discard(self.project["id"])
 
+    def test_canvas_video_connections_are_flova_inputs_and_locked_before_run(self):
+        self.approved_project()
+        master = self.project["master_versions"][-1]
+        self.project["directions"].append({"id": "direction-1", "brief_id": self.project["brief_versions"][-1]["id"], "master_id": master["id"]})
+        self.store.approve_direction(self.project, "direction-1")
+        script = self.store.add_script(self.project, "产品短片脚本")
+        self.store.approve_script(self.project, script["id"])
+        board = self.store.add_storyboard(self.project, [{"visual": "产品正面", "duration": 3, "reference_asset_id": master["asset_ids"][0]}])
+        self.store.approve_storyboard(self.project, board["id"])
+        self.project["external"]["flova_project_id"] = "remote-project"
+        source, raw = self.store.source_bytes(self.project, master["asset_ids"][0])
+        canvas = {"canvas_project_id": "canvas-1", "config_node_id": "video-config-1", "connection_ids": ["edge-text", "edge-image"],
+                  "prompt": "晨光厨房，展示白色产品", "reference_images": [{"node_id": "image-1", "sha256": hashlib.sha256(raw).hexdigest()}]}
+        offer = flova_flow.quote(self.project, canvas)
+        self.assertEqual(offer["input_snapshot"]["assets"][0]["id"], source["id"])
+        self.assertEqual(len(offer["input_snapshot"]["assets"]), 1)
+        with self.assertRaisesRegex(ValueError, "重新查看快照"):
+            flova_flow.run(self.store, self.project, {"request_id": "canvas-run-123", "approved_fingerprint": offer["fingerprint"],
+                                                      "canvas_context": {**canvas, "prompt": "变更后的提示词"}})
+        with self.assertRaisesRegex(ValueError, "当前已确认母版"):
+            flova_flow.quote(self.project, {**canvas, "reference_images": [{"node_id": "image-1", "sha256": hashlib.sha256(b"different").hexdigest()}]})
+        other_source = next(item for item in self.project["sources"] if item["id"] == master["asset_ids"][1])
+        with self.assertRaisesRegex(ValueError, "缺少已批准分镜"):
+            flova_flow.quote(self.project, {**canvas, "reference_images": [{"node_id": "image-1", "sha256": other_source["sha256"]}]})
+        with patch.object(flova_flow.threading, "Thread"):
+            task = flova_flow.run(self.store, self.project, {"request_id": "canvas-run-123", "approved_fingerprint": offer["fingerprint"], "canvas_context": canvas})
+        self.assertEqual(task["node_id"], "video-config-1")
+        uploaded_plan = []
+        def inspect_upload(path, envelope):
+            if path.name == "approved-plan.txt":
+                uploaded_plan.append(path.read_text(encoding="utf-8"))
+        with patch.object(flova_flow, "_upload", side_effect=inspect_upload), patch.object(flova_flow.flova, "invoke", return_value={"status": "completed", "terminal": True, "stream_chat_id": "canvas-stream", "pending_actions": []}) as remote:
+            flova_flow._run_worker(self.store, self.project["id"], task["id"])
+        self.assertIn("晨光厨房，展示白色产品", uploaded_plan[0])
+        self.assertIn("画布视频配置节点输入", uploaded_plan[0])
+        self.assertIn("画布", remote.call_args.args[3])
+
     def test_flova_shots_advance_only_after_review_and_export_uses_current_versions(self):
         self.approved_project()
         brief_id = self.project["brief_versions"][-1]["id"]

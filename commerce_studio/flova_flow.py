@@ -85,7 +85,40 @@ def attach_project(store, project, project_id):
     return project["external"]
 
 
-def quote(project):
+def _canvas_input(project, body):
+    if body is None:
+        return None
+    if not isinstance(body, dict) or not all(isinstance(body.get(key), str) and body[key] for key in ("canvas_project_id", "config_node_id")):
+        raise ValueError("画布视频配置节点无效")
+    edges = body.get("connection_ids")
+    prompt = body.get("prompt")
+    if not isinstance(edges, list) or not edges or len(edges) > 30 or any(not isinstance(edge, str) or not edge for edge in edges) or len(set(edges)) != len(edges):
+        raise ValueError("画布视频输入需要有效连线")
+    if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 12000:
+        raise ValueError("画布视频提示词无效")
+    references = body.get("reference_images")
+    if not isinstance(references, list) or not 1 <= len(references) <= 3:
+        raise ValueError("画布视频需要一至三张已确认母版参考图")
+    master = project["master_versions"][-1]
+    sources = {source["id"]: source for source in project["sources"] if source["id"] in master["asset_ids"]}
+    selected = []
+    for reference in references:
+        if not isinstance(reference, dict) or not isinstance(reference.get("node_id"), str) or not reference["node_id"]:
+            raise ValueError("画布参考图节点无效")
+        digest = reference.get("sha256")
+        if not isinstance(digest, str) or len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+            raise ValueError("画布参考图摘要无效")
+        source = next((item for item in sources.values() if item["sha256"] == digest), None)
+        if not source:
+            raise ValueError("画布视频参考图须是当前已确认母版的原图")
+        selected.append({"node_id": reference["node_id"], "source_id": source["id"], "sha256": digest, "view": source["view_label"]})
+    if len({item["node_id"] for item in selected}) != len(selected):
+        raise ValueError("画布参考图节点重复")
+    return {"canvas_project_id": body["canvas_project_id"], "config_node_id": body["config_node_id"],
+            "connection_ids": edges, "prompt": prompt.strip(), "reference_images": selected}
+
+
+def quote(project, canvas_context=None):
     project_id = project["external"]["flova_project_id"]
     storyboard_id = project["storyboard_approval"]
     if not project_id or not storyboard_id or not project["master_versions"] or not project["brief_versions"]:
@@ -100,10 +133,16 @@ def quote(project):
     if any(details.get(detail_id, {}).get("status") != "已核实" for shot in storyboard["shots"] for detail_id in shot.get("detail_ids", [])):
         raise ValueError("分镜含未核实的推断细节，请重新审核")
     sources = {s["id"]: s for s in project["sources"]}
-    assets = [{"id": asset_id, "sha256": sources[asset_id]["sha256"], "view": sources[asset_id]["view_label"]} for asset_id in master["asset_ids"]]
+    canvas_input = _canvas_input(project, canvas_context)
+    selected_ids = {item["source_id"] for item in canvas_input["reference_images"]} if canvas_input else set(master["asset_ids"])
+    if canvas_input and not {shot["reference_asset_id"] for shot in storyboard["shots"]}.issubset(selected_ids):
+        raise ValueError("画布连线参考图缺少已批准分镜使用的母版视角")
+    assets = [{"id": asset_id, "sha256": sources[asset_id]["sha256"], "view": sources[asset_id]["view_label"]} for asset_id in master["asset_ids"] if asset_id in selected_ids]
     snapshot = {"flova_project_id": project_id, "brief_id": brief["id"], "master_id": master["id"],
                 "script_id": script["id"], "storyboard_id": storyboard_id, "assets": assets,
                 "shot_count": len(storyboard["shots"]), "duration": sum(s["duration"] for s in storyboard["shots"])}
+    if canvas_input:
+        snapshot["canvas_input"] = canvas_input
     return {"provider": "Flova", "input_snapshot": snapshot, "fingerprint": fingerprint(snapshot),
             "estimate": None, "currency": None, "pricing_source": "Flova CLI 未提供可靠的单镜费用预测", "reliable": False,
             "requires_explicit_run": True}
@@ -161,7 +200,10 @@ def _run_worker(store, project_id, task_id):
             material.write_text("已确认产品事实：\n" + "\n".join(f"{f['field']}：{f['value']}" for f in brief["facts"])
                                 + "\n\n已批准脚本：\n" + script["text"] + "\n\n已批准分镜：\n"
                                 + "\n".join(f"镜头 {(snapshot['shot_index'] if task['kind'] == 'video_shot' else i)+1}（{shot['duration']} 秒）：{shot['visual']}；字幕：{shot['caption']}；已核实细节：{', '.join(next(d['text'] for d in master.get('inferred_details', []) if isinstance(d, dict) and d['id'] == detail_id) for detail_id in shot.get('detail_ids', [])) or '无'}" for i, shot in enumerate(shots))
-                                + "\n\n母版仍待核实的结构不得用于特写、规格或卖点宣称。", encoding="utf-8")
+                                + "\n\n母版仍待核实的结构不得用于特写、规格或卖点宣称。"
+                                + ("\n\n画布视频配置节点输入：\n" + snapshot["canvas_input"]["prompt"]
+                                   + "\n画布连线选定的母版视角：" + "、".join(item["view"] for item in snapshot["canvas_input"]["reference_images"])
+                                   if snapshot.get("canvas_input") else ""), encoding="utf-8")
             files = [material]
             for asset in snapshot["assets"]:
                 source, raw = store.source_bytes(project, asset["id"])
@@ -185,6 +227,8 @@ def _run_worker(store, project_id, task_id):
                           "上传的 approved-plan.txt 是正式脚本与分镜，master 图片是同一真实商品的已确认参考。"
                           "每个镜头遵守分镜目标时长；静音时也要能理解；不要把未获核实的结构当作卖点。"
                           "本轮先制作并呈现镜头与时间线，最终导出等待人工审核。")
+                if snapshot.get("canvas_input"):
+                    prompt += "请同时遵守 approved-plan.txt 中的画布视频配置节点输入；其中列出的视角是画布连线选定的参考图。与已确认事实或批准分镜冲突时，以已批准内容为准。"
             with store.lock:
                 project = store.load(project_id)
                 task = next(t for t in project["tasks"] if t["id"] == task_id)
@@ -216,7 +260,7 @@ def run(store, project, body):
     existing = next((t for t in project["tasks"] if t.get("idempotency_key") == request_id), None)
     if existing:
         return existing
-    offer = quote(project)
+    offer = quote(project, body.get("canvas_context"))
     if any(t.get("kind") == "video_shot" and t.get("input_snapshot", {}).get("storyboard_id") == project["storyboard_approval"] for t in project["tasks"]):
         raise ValueError("当前分镜已开始逐镜制作，请完成逐镜审核")
     if body.get("approved_fingerprint") != offer["fingerprint"]:
@@ -230,6 +274,8 @@ def run(store, project, body):
     task = {"id": ident(), "kind": "video", "provider": "Flova", "status": "已排队",
             "idempotency_key": request_id, "input_snapshot": offer["input_snapshot"], "estimate": None,
             "actual": None, "currency": None, "remote_id": None, "attempts": 1, "created": stamp(), "updated": stamp()}
+    if offer["input_snapshot"].get("canvas_input"):
+        task["node_id"] = offer["input_snapshot"]["canvas_input"]["config_node_id"]
     project["video_approval"] = None
     project["tasks"].append(task)
     store.save(project)

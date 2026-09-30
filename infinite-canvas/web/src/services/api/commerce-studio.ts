@@ -51,6 +51,7 @@ export type StudioProject = {
 export type MasterRequest = { group: number; view_label: string; views: string; source_id: string };
 export type StudioQuote = { fingerprint: string; estimate: number | null; currency?: string | null; pricing_source: string; input_snapshot: unknown };
 export type PreviewRequest = { canvas_project_id: string; config_node_id: string; reference_node_id: string; connection_ids: string[]; prompt: string; ratio: string; reference_data_url: string };
+export type FlovaCanvasContext = { canvas_project_id: string; config_node_id: string; connection_ids: string[]; prompt: string; reference_images: Array<{ node_id: string; sha256: string }> };
 
 async function request<T>(path: string, body?: unknown): Promise<T> {
     const response = await fetch(`${BASE}${path}`, {
@@ -112,12 +113,12 @@ export const studioApi = {
     approveStoryboard: (id: string, storyboard_id: string) => request(`/projects/${id}/storyboards/approve`, { storyboard_id }),
     flovaCreate: (id: string) => request(`/projects/${id}/flova/create`, {}),
     flovaAttach: (id: string, project_id: string) => request(`/projects/${id}/flova/attach`, { project_id }),
-    flovaQuote: (id: string) => request<StudioQuote>(`/projects/${id}/flova/quote`, {}),
+    flovaQuote: (id: string, canvas_context?: FlovaCanvasContext) => request<StudioQuote>(`/projects/${id}/flova/quote`, { canvas_context }),
     flovaShotQuote: (id: string, shot_id: string) => request<StudioQuote>(`/projects/${id}/flova/shots/quote`, { shot_id }),
     flovaShotRun: (id: string, shot_id: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/flova/shots/run`, { shot_id, approved_fingerprint, request_id }),
     flovaShotApprove: (id: string, task_id: string) => request(`/projects/${id}/flova/shots/approve`, { task_id }),
     flovaShotSequenceApprove: (id: string) => request(`/projects/${id}/flova/shots/approve-sequence`, {}),
-    flovaRun: (id: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/flova/run`, { approved_fingerprint, request_id }),
+    flovaRun: (id: string, approved_fingerprint: string, request_id: string, canvas_context?: FlovaCanvasContext) => request(`/projects/${id}/flova/run`, { approved_fingerprint, request_id, canvas_context }),
     flovaRecover: (id: string, taskId: string) => request(`/projects/${id}/flova/${taskId}/recover`, {}),
     flovaResumeAction: (id: string, task_id: string, action_id: string, option_id: string) => request(`/projects/${id}/flova/actions/resume`, { task_id, action_id, option_id }),
     flovaResources: (id: string) => request<{ items: Array<{ resource_id: string; name?: string; media_type?: string; status?: string }>; unparsed: boolean }>(`/projects/${id}/flova/resources`, {}),
