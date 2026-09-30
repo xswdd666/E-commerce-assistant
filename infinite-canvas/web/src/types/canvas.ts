@@ -85,6 +85,7 @@ export type CanvasNodeMetadata = {
     videoTaskProvider?: "openai" | "gemini";
     commerceAsset?: { projectId: string; deliverableId: string };
     commerceSource?: { projectId: string; kind: "script" | "storyboard"; versionId: string; originalText: string };
+    commerceImage?: { projectId: string; sourceId: string; masterVersionId: string; originalStorageKey?: string };
     groupId?: string;
     interactive?: boolean; // Plugin node interaction/move state; see CanvasNodeDefinition.interactionToggle.
 };
@@ -119,6 +120,7 @@ export type CanvasAssistantImage = {
     dataUrl: string;
     storageKey?: string;
     prompt: string;
+    commerceImage?: { projectId: string; sourceId: string; masterVersionId: string };
 };
 
 export type CanvasAssistantMessage = {

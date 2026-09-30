@@ -2960,7 +2960,7 @@ function InfiniteCanvasPage() {
                 position: { x: center.x - config.width / 2, y: center.y - config.height / 2 },
                 width: config.width,
                 height: config.height,
-                metadata: { ...imageMetadata({ ...storedImage, width: meta.width, height: meta.height }), prompt: image.prompt },
+                metadata: { ...imageMetadata({ ...storedImage, width: meta.width, height: meta.height }), prompt: image.prompt, commerceImage: image.commerceImage ? { ...image.commerceImage, originalStorageKey: storedImage.storageKey } : undefined },
             };
 
             setNodes((prev) => [...prev, node]);
@@ -3146,7 +3146,7 @@ function InfiniteCanvasPage() {
                     nodes={nodes}
                     connections={connections}
                     selectedNodeId={[...selectedNodeIds][0]}
-                    onInsertImage={(dataUrl, title) => insertAssistantImage({ id: nanoid(), prompt: title, dataUrl })}
+                    onInsertImage={(dataUrl, title, commerceImage) => insertAssistantImage({ id: nanoid(), prompt: title, dataUrl, commerceImage })}
                     onInsertText={insertAssistantText}
                     onInsertVideo={async (blob, title, projectId, deliverableId) => {
                         const media = await uploadMediaFile(blob, "video");

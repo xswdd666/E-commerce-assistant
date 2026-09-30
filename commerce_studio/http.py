@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import base64
 import os
+import shutil
+import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -50,6 +52,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send_archive(self, raw, filename):
         self._send_binary(raw, filename, "application/zip")
+
+    def _send_archive_file(self, path, filename):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Length", str(path.stat().st_size))
+        self.send_header("Cache-Control", "no-store")
+        origin = self.headers.get("Origin", "")
+        if origin in ("http://127.0.0.1:3000", "http://localhost:3000", "http://127.0.0.1:5173", "http://localhost:5173"):
+            self.send_header("Access-Control-Allow-Origin", origin)
+        self.end_headers()
+        with path.open("rb") as archive:
+            shutil.copyfileobj(archive, self.wfile, length=1024 * 1024)
 
     def do_OPTIONS(self):
         self.send_response(204)
@@ -240,7 +255,10 @@ class Handler(BaseHTTPRequestHandler):
             parts = [part for part in urlparse(self.path).path.split("/") if part]
             if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "backup":
                 project = STORE.load(parts[2])
-                self._send_archive(backup.export_project(STORE, project), f"commerce-project-{project['id']}.zip")
+                with tempfile.TemporaryDirectory(dir=STORE.root) as temporary:
+                    path = Path(temporary) / "project.zip"
+                    backup.write_project_archive(STORE, project, path)
+                    self._send_archive_file(path, f"commerce-project-{project['id']}.zip")
                 return
             if len(parts) == 5 and parts[:2] == ["api", "projects"] and parts[3] == "deliverables":
                 project = STORE.load(parts[2])
@@ -264,7 +282,17 @@ class Handler(BaseHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length", "0"))
                 if length <= 0 or length > 250 * 1024 * 1024:
                     raise ValueError("备份为空或超过 250 MB")
-                self._send(200, backup.restore_project(STORE, self.rfile.read(length)))
+                with tempfile.TemporaryDirectory(dir=STORE.root) as temporary:
+                    path = Path(temporary) / "upload.zip"
+                    with path.open("wb") as output:
+                        remaining = length
+                        while remaining:
+                            chunk = self.rfile.read(min(1024 * 1024, remaining))
+                            if not chunk:
+                                raise ValueError("备份上传未完成")
+                            output.write(chunk)
+                            remaining -= len(chunk)
+                    self._send(200, backup.restore_project(STORE, path))
                 return
             self._send(200, self._route("POST"))
         except (ValueError, json.JSONDecodeError) as exc:
