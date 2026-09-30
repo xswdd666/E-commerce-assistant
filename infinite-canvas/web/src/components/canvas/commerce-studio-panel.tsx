@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Drawer, Input, Select, Space, Tag, Typography } from "antd";
+import { Button, Checkbox, Drawer, Input, Select, Space, Tag, Typography } from "antd";
 import localforage from "localforage";
 import { saveAs } from "file-saver";
 
@@ -49,6 +49,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
     const [canvasFlovaOffer, setCanvasFlovaOffer] = useState<StudioQuote | null>(null);
     const [canvasFlovaRequest, setCanvasFlovaRequest] = useState<FlovaCanvasContext | null>(null);
     const [canvasFlovaShotId, setCanvasFlovaShotId] = useState<string | null>(null);
+    const [canvasAutoRetry, setCanvasAutoRetry] = useState(false);
     const [previewRatio, setPreviewRatio] = useState("1:1");
     const [comparison, setComparison] = useState<{ original: string; generated: string } | null>(null);
     const [previewComparison, setPreviewComparison] = useState<{ taskId: string; original: string; generated: string } | null>(null);
@@ -125,6 +126,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
     const canvasShotIndex = currentStoryboard?.shots.findIndex((shot) => shot.id === canvasFlovaShotId) ?? -1;
     const canvasShotReady = !canvasFlovaShotId || Boolean(currentStoryboard && canvasShotIndex >= 0 && !project?.shot_approvals[canvasFlovaShotId]
         && currentStoryboard.shots.slice(0, canvasShotIndex).every((shot) => project?.shot_approvals[shot.id]?.storyboard_id === currentStoryboard.id));
+    const canvasRemainingRetries = Math.max(0, 2 - (project?.tasks.filter((task) => task.kind === "video_shot" && task.automatic_retry && (task.input_snapshot?.shot_id === canvasFlovaShotId || task.node_id === selectedNodeId)).length || 0));
     const masterRequest: MasterRequest = { group: candidateGroup, view_label: viewLabel, views: viewPreset, source_id: candidateSourceId || "" };
     const candidates = project?.sources.filter((source) => source.origin === "SeeAny candidate") || [];
     const downloadSource = async (sourceId: string) => {
@@ -267,6 +269,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                             {selected?.type === CanvasNodeType.Config ? <Space direction="vertical" className="mt-2 w-full">
                                 {selected.metadata?.generationMode === "video" ? <>
                                     <Select value={canvasFlovaShotId || ""} onChange={(value) => { setCanvasFlovaShotId(value || null); setCanvasFlovaOffer(null); setCanvasFlovaRequest(null); }} options={[{ value: "", label: "整片创作" }, ...(currentStoryboard?.shots || []).map((shot, index) => ({ value: shot.id, label: `镜头 ${index + 1}：${shot.visual.slice(0, 20)}` }))]} />
+                                    {canvasFlovaShotId ? <Checkbox checked={canvasAutoRetry} onChange={(event) => setCanvasAutoRetry(event.target.checked)}>Flova 明确失败时自动重试，剩余最多 {canvasRemainingRetries} 次；每次可能产生费用</Checkbox> : null}
                                     <Button disabled={busy || !project.storyboard_approval || !canvasShotReady} onClick={() => void act(async () => {
                                         setCanvasFlovaOffer(null);
                                         setCanvasFlovaRequest(null);
@@ -295,7 +298,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                                         <Typography.Paragraph>连线 {canvasFlovaRequest.connection_ids.length} 条；已审核参考图 {canvasFlovaRequest.reference_images.length} 张；音视频参考 {canvasFlovaRequest.reference_media.length} 份；已批准分镜 {String((canvasFlovaOffer.input_snapshot as { storyboard_id: string }).storyboard_id).slice(0, 12)}；费用：{canvasFlovaOffer.estimate == null ? "未知" : canvasFlovaOffer.estimate}</Typography.Paragraph>
                                         {(canvasFlovaOffer.input_snapshot as { assets: Array<{ id: string; kind: string; view: string; node_id?: string }> }).assets.map((item) => <Tag key={item.id}>{item.kind === "master" ? "母版图" : item.kind === "scene" ? "已采用场景图" : "场景图原始参考"} · {item.node_id ? nodeNames[item.node_id] || item.view : item.view}</Tag>)}
                                         {canvasFlovaRequest.reference_media.map((item) => <Tag key={item.source_id}>{item.kind === "video" ? "视频" : "音频"} · {nodeNames[item.node_id] || item.node_id}</Tag>)}
-                                        <Button type="primary" disabled={busy} onClick={() => void act(async () => { if (canvasFlovaShotId) await studioApi.flovaShotRun(project.id, canvasFlovaShotId, canvasFlovaOffer.fingerprint, crypto.randomUUID(), canvasFlovaRequest); else await studioApi.flovaRun(project.id, canvasFlovaOffer.fingerprint, crypto.randomUUID(), canvasFlovaRequest); setCanvasFlovaOffer(null); setCanvasFlovaRequest(null); })}>确认按此画布输入提交 Flova {canvasFlovaShotId ? "单镜" : "整片"}</Button>
+                                        <Button type="primary" disabled={busy} onClick={() => void act(async () => { if (canvasFlovaShotId) await studioApi.flovaShotRun(project.id, canvasFlovaShotId, canvasFlovaOffer.fingerprint, crypto.randomUUID(), canvasFlovaRequest, canvasAutoRetry ? canvasRemainingRetries : 0); else await studioApi.flovaRun(project.id, canvasFlovaOffer.fingerprint, crypto.randomUUID(), canvasFlovaRequest); setCanvasFlovaOffer(null); setCanvasFlovaRequest(null); })}>确认按此画布输入提交 Flova {canvasFlovaShotId ? "单镜" : "整片"}</Button>
                                     </div> : null}
                                 </> : null}
                                 {selected.metadata?.generationMode !== "video" ? <><Select value={previewRatio} onChange={setPreviewRatio} options={["1:1", "3:4", "4:3", "9:16", "16:9", "3:2", "2:3"].map((ratio) => ({ value: ratio, label: ratio }))} />

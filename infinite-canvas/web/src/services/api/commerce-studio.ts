@@ -44,7 +44,7 @@ export type StudioProject = {
     costs: StudioCost[];
     cost_target: { amount: number; currency: string } | null;
     external: { flova_project_id: string; flova_project_url: string };
-    tasks: Array<{ id: string; provider: string; kind?: string; node_id?: string; status: string; remote_id?: string | null; estimate: number | null; actual: number | null; candidate_group?: number; view_label?: string; asset_ids?: string[]; source_id?: string; input_snapshot?: { item?: { id: string }; version_id?: string; shot_id?: string; storyboard_id?: string; config_node_id?: string; brief_id?: string; master_id?: string; prompt?: string; reference_node_id?: string; connection_ids?: string[]; reference_sha256?: string }; error?: string; interrupted_at?: string; manual_resolution?: { outcome: string; note: string; at: string }; pending_actions?: FlovaPendingAction[] }>;
+    tasks: Array<{ id: string; provider: string; kind?: string; node_id?: string; status: string; remote_id?: string | null; estimate: number | null; actual: number | null; candidate_group?: number; view_label?: string; asset_ids?: string[]; source_id?: string; automatic_retry?: boolean; auto_retries_remaining?: number; attempts?: number; input_snapshot?: { item?: { id: string }; version_id?: string; shot_id?: string; storyboard_id?: string; config_node_id?: string; brief_id?: string; master_id?: string; prompt?: string; reference_node_id?: string; connection_ids?: string[]; reference_sha256?: string }; error?: string; interrupted_at?: string; manual_resolution?: { outcome: string; note: string; at: string }; pending_actions?: FlovaPendingAction[] }>;
     chat: Array<{ id: string; prompt: string; reply: string; brief_id?: string; created: string }>;
 };
 
@@ -115,7 +115,7 @@ export const studioApi = {
     flovaAttach: (id: string, project_id: string) => request(`/projects/${id}/flova/attach`, { project_id }),
     flovaQuote: (id: string, canvas_context?: FlovaCanvasContext) => request<StudioQuote>(`/projects/${id}/flova/quote`, { canvas_context }),
     flovaShotQuote: (id: string, shot_id: string, canvas_context?: FlovaCanvasContext) => request<StudioQuote>(`/projects/${id}/flova/shots/quote`, { shot_id, canvas_context }),
-    flovaShotRun: (id: string, shot_id: string, approved_fingerprint: string, request_id: string, canvas_context?: FlovaCanvasContext) => request(`/projects/${id}/flova/shots/run`, { shot_id, approved_fingerprint, request_id, canvas_context }),
+    flovaShotRun: (id: string, shot_id: string, approved_fingerprint: string, request_id: string, canvas_context?: FlovaCanvasContext, auto_retries = 0) => request(`/projects/${id}/flova/shots/run`, { shot_id, approved_fingerprint, request_id, canvas_context, auto_retries }),
     flovaShotApprove: (id: string, task_id: string) => request(`/projects/${id}/flova/shots/approve`, { task_id }),
     flovaShotSequenceApprove: (id: string) => request(`/projects/${id}/flova/shots/approve-sequence`, {}),
     flovaRun: (id: string, approved_fingerprint: string, request_id: string, canvas_context?: FlovaCanvasContext) => request(`/projects/${id}/flova/run`, { approved_fingerprint, request_id, canvas_context }),

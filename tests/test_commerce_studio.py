@@ -440,6 +440,44 @@ class CommerceStudioTests(unittest.TestCase):
             restored = backup.restore_project(self.store, archive)
         self.assertEqual(self.store.source_bytes(restored, source["id"])[1], raw)
 
+    def test_flova_shot_auto_retries_only_confirmed_failures_and_records_each_attempt(self):
+        self.approved_project()
+        master = self.project["master_versions"][-1]
+        self.project["directions"].append({"id": "direction-retry", "brief_id": self.project["brief_versions"][-1]["id"], "master_id": master["id"]})
+        self.store.approve_direction(self.project, "direction-retry")
+        script = self.store.add_script(self.project, "单镜脚本")
+        self.store.approve_script(self.project, script["id"])
+        board = self.store.add_storyboard(self.project, [{"visual": "产品正面", "duration": 3, "reference_asset_id": master["asset_ids"][0]}])
+        self.store.approve_storyboard(self.project, board["id"])
+        self.project["external"]["flova_project_id"] = "remote-project"
+        shot_id = board["shots"][0]["id"]
+        offer = flova_flow.shot_quote(self.project, shot_id)
+        with patch.object(flova_flow.threading, "Thread"):
+            task = flova_flow.run_shot(self.store, self.project, {"shot_id": shot_id, "approved_fingerprint": offer["fingerprint"],
+                "request_id": "auto-retry-start", "auto_retries": 2})
+        failures = [{"status": "failed", "terminal": True, "stream_chat_id": f"failed-{index}", "pending_actions": []} for index in range(3)]
+        with patch.object(flova_flow, "_upload"), patch.object(flova_flow.flova, "invoke", side_effect=failures) as remote:
+            flova_flow._run_worker(self.store, self.project["id"], task["id"])
+        self.project = self.store.load(self.project["id"])
+        attempts = [item for item in self.project["tasks"] if item.get("kind") == "video_shot"]
+        self.assertEqual([item["status"] for item in attempts], ["失败"] * 3)
+        self.assertEqual([item["attempts"] for item in attempts], [1, 2, 3])
+        self.assertEqual(sum(bool(item.get("automatic_retry")) for item in attempts), 2)
+        self.assertEqual(len([cost for cost in self.project["costs"] if cost["stage"] == "video_shot"]), 3)
+        self.assertEqual(remote.call_count, 3)
+        with self.assertRaisesRegex(ValueError, "自动重试上限"):
+            flova_flow.run_shot(self.store, self.project, {"shot_id": shot_id, "approved_fingerprint": offer["fingerprint"],
+                "request_id": "auto-retry-again", "auto_retries": 1})
+        with patch.object(flova_flow.threading, "Thread"):
+            unknown = flova_flow.run_shot(self.store, self.project, {"shot_id": shot_id, "approved_fingerprint": offer["fingerprint"],
+                "request_id": "manual-after-fail", "auto_retries": 0})
+        with patch.object(flova_flow, "_upload"), patch.object(flova_flow.flova, "invoke", return_value={"status": "running", "terminal": False, "stream_chat_id": "unknown", "pending_actions": []}) as remote:
+            flova_flow._run_worker(self.store, self.project["id"], unknown["id"])
+        self.project = self.store.load(self.project["id"])
+        self.assertEqual(self.project["tasks"][-1]["status"], "待核对")
+        self.assertEqual(len([item for item in self.project["tasks"] if item.get("kind") == "video_shot"]), 4)
+        remote.assert_called_once()
+
     def test_flova_shots_advance_only_after_review_and_export_uses_current_versions(self):
         self.approved_project()
         brief_id = self.project["brief_versions"][-1]["id"]

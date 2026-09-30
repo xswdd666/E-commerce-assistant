@@ -340,6 +340,8 @@ def _upload(path: Path, envelope_path: Path):
 
 
 def _run_worker(store, project_id, task_id):
+    retry_task_id = None
+    retry = None
     try:
         with store.lock:
             project = store.load(project_id)
@@ -423,7 +425,25 @@ def _run_worker(store, project_id, task_id):
             task = next(t for t in project["tasks"] if t["id"] == task_id)
             _apply_run_result(task, result)
             _remember_project_url(project, result)
+            if task["kind"] == "video_shot" and task["status"] == "失败" and task.get("remote_id") and task.get("auto_retries_remaining", 0) > 0:
+                try:
+                    current = shot_quote(project, task["input_snapshot"]["shot_id"],
+                                         _canvas_request_from_snapshot(task["input_snapshot"]))["input_snapshot"]
+                except ValueError:
+                    current = None
+                if current is not None and fingerprint(current) == fingerprint(task["input_snapshot"]):
+                    retry = {"id": ident(), "kind": "video_shot", "provider": "Flova", "status": "已排队",
+                             "idempotency_key": f"auto-{task['id']}", "input_snapshot": task["input_snapshot"],
+                             "estimate": None, "actual": None, "currency": None, "remote_id": None,
+                             "attempts": task["attempts"] + 1, "automatic_retry": True,
+                             "retry_of": task["id"], "auto_retries_remaining": task["auto_retries_remaining"] - 1,
+                             "created": stamp(), "updated": stamp()}
+                    if task.get("node_id"):
+                        retry["node_id"] = task["node_id"]
+                    project["tasks"].append(retry)
             store.save(project)
+            if retry is not None:
+                retry_task_id = retry["id"]
     except Exception as exc:
         with store.lock:
             project = store.load(project_id)
@@ -431,8 +451,11 @@ def _run_worker(store, project_id, task_id):
             task.update(status="待核对", error=str(exc)[:300], updated=stamp())
             store.save(project)
     finally:
-        with ACTIVE_LOCK:
-            ACTIVE.discard(project_id)
+        if retry_task_id is None:
+            with ACTIVE_LOCK:
+                ACTIVE.discard(project_id)
+    if retry_task_id is not None:
+        _run_worker(store, project_id, retry_task_id)
 
 
 def run(store, project, body):
@@ -484,6 +507,14 @@ def run_shot(store, project, body):
     previous = [t for t in project["tasks"] if t.get("kind") == "video_shot" and t.get("input_snapshot", {}).get("shot_id") == snapshot["shot_id"]]
     if any(t["status"] == "待审核" for t in previous):
         raise ValueError("此镜头已有待审核结果；请先在 Flova 核对")
+    auto_retries = body.get("auto_retries", 0)
+    if type(auto_retries) is not int or not 0 <= auto_retries <= 2:
+        raise ValueError("自动重试次数须在零至两次之间")
+    node_id = snapshot.get("canvas_input", {}).get("config_node_id")
+    used_retries = sum(bool(t.get("automatic_retry")) for t in project["tasks"] if t.get("kind") == "video_shot" and
+                       (t.get("input_snapshot", {}).get("shot_id") == snapshot["shot_id"] or node_id and t.get("node_id") == node_id))
+    if auto_retries + used_retries > 2:
+        raise ValueError("此镜头或画布节点已达自动重试上限，请改为手动提交")
     with ACTIVE_LOCK:
         if project["id"] in ACTIVE:
             raise ValueError("Flova 项目已有运行中的本地进程")
@@ -491,6 +522,7 @@ def run_shot(store, project, body):
     task = {"id": ident(), "kind": "video_shot", "provider": "Flova", "status": "已排队",
             "idempotency_key": request_id, "input_snapshot": snapshot, "estimate": None,
             "actual": None, "currency": None, "remote_id": None, "attempts": len(previous) + 1,
+            "auto_retries_remaining": auto_retries,
             "created": stamp(), "updated": stamp()}
     if snapshot.get("canvas_input"):
         task["node_id"] = snapshot["canvas_input"]["config_node_id"]
