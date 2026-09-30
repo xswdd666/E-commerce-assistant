@@ -1569,7 +1569,9 @@ function InfiniteCanvasPage() {
     );
 
     useEffect(() => {
-        const handlePointerUp = (event: PointerEvent) => finishNodeDrag(event.clientX, event.clientY);
+        // Pointer-driven automation and touch input do not always emit a follow-up mouseup.
+        // Reuse the same drop-target logic so business-node connections finish reliably.
+        const handlePointerUp = (event: PointerEvent) => handleGlobalMouseUp(event as unknown as MouseEvent);
         const cancelNodeDrag = () => finishNodeDrag();
         window.addEventListener("mousemove", handleGlobalMouseMove);
         window.addEventListener("mouseup", handleGlobalMouseUp);
