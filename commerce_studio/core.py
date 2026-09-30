@@ -85,7 +85,9 @@ class Store:
             project = self.load(item["id"])
             fields = [("项目", project["name"])]
             fields.extend(("素材", source.get("name", "")) for source in project["sources"])
+            fields.extend(("导入提示词", source.get("import_prompt", "")) for source in project["sources"])
             fields.extend(("提示词", prompt.get("text", "")) for prompt in project["prompt_versions"])
+            fields.extend(("套图提示词", image.get("prompt", "")) for plan in project["gallery_versions"] for image in plan.get("items", []))
             fields.extend(("旧提示词", prompt.get("text", "")) for prompt in project.get("legacy_import", {}).get("archive", {}).get("prompts", []))
             for kind, value in fields:
                 if isinstance(value, str) and needle in value.casefold():

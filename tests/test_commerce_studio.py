@@ -79,11 +79,15 @@ class CommerceStudioTests(unittest.TestCase):
         self.assertEqual(self.project["brief_versions"], [])
 
     def test_search_projects_sources_and_prompt_history(self):
-        self.store.add_source(self.project, "银色正面.png", "image/png", base64.b64encode(b"image").decode())
+        source = self.store.add_source(self.project, "银色正面.png", "image/png", base64.b64encode(b"image").decode())
+        source["import_prompt"] = "GPT 厨房晨光画面"
+        self.project["gallery_versions"].append({"items": [{"prompt": "白底圆桌套图"}]})
         self.project["legacy_import"] = {"archive": {"prompts": [{"text": "居家银色产品特写"}]}}
         self.store.save(self.project)
         self.assertEqual(self.store.search("电热杯")[0]["kind"], "项目")
         self.assertEqual({item["kind"] for item in self.store.search("银色")}, {"素材", "旧提示词"})
+        self.assertEqual(self.store.search("厨房晨光")[0]["kind"], "导入提示词")
+        self.assertEqual(self.store.search("圆桌")[0]["kind"], "套图提示词")
         with self.assertRaisesRegex(ValueError, "关键词"):
             self.store.search("")
 
