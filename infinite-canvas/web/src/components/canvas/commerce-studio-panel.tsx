@@ -86,6 +86,20 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
         }
     };
 
+    const uploadSources = async (files: FileList) => {
+        if (!project || busy || !files.length) return;
+        setBusy(true);
+        const failures: string[] = [];
+        for (const file of Array.from(files)) {
+            try { await studioApi.source(project.id, file); }
+            catch (cause) { failures.push(`${file.name}：${cause instanceof Error ? cause.message : "上传失败"}`); }
+        }
+        try { setProject(await studioApi.get(project.id)); }
+        catch (cause) { failures.push(cause instanceof Error ? cause.message : "刷新项目失败"); }
+        setError(failures.join("；"));
+        setBusy(false);
+    };
+
     const selected = nodes.find((node) => node.id === selectedNodeId);
     const selectedSource = selected?.metadata?.commerceSource;
     const selectedAsset = selected?.metadata?.commerceAsset;
@@ -163,11 +177,10 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                         {project.legacy_import ? <section><Typography.Paragraph type="warning">已从旧原型导入。{project.legacy_import.review_required}；旧预算设置不会阻止新任务。</Typography.Paragraph><Button onClick={() => saveAs(new Blob([JSON.stringify(project.legacy_import?.archive, null, 2)], { type: "application/json" }), `${project.name}-旧原型历史.json`)}>下载旧项目历史快照</Button></section> : null}
                         <section>
                             <Typography.Title level={5}>原始资料</Typography.Title>
-                            <input type="file" accept="image/*,text/plain,application/pdf,.docx" disabled={busy} onChange={(event) => {
-                                const file = event.target.files?.[0];
-                                if (file) void act(() => studioApi.source(project.id, file));
-                                event.target.value = "";
-                            }} />
+                            <div className="rounded-lg border border-dashed p-3" onDragOver={(event) => { event.preventDefault(); event.stopPropagation(); }} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); void uploadSources(event.dataTransfer.files); }}>
+                                <Typography.Paragraph type="secondary">拖入商品实拍、截图、TXT、PDF 或 DOCX，也可选择多个文件。</Typography.Paragraph>
+                                <input type="file" multiple accept="image/*,text/plain,application/pdf,.docx" disabled={busy} onChange={(event) => { if (event.target.files) void uploadSources(event.target.files); event.target.value = ""; }} />
+                            </div>
                             {project.sources.filter((source) => !source.origin).map((source) => <div key={source.id} className="mt-2"><Typography.Text>{source.name}</Typography.Text> <Typography.Text type="secondary">{Math.round(source.bytes / 1024)} KB · {source.parse_status || "需人工查看"}</Typography.Text><Button type="link" disabled={busy} onClick={() => void act(() => downloadSource(source.id))}>下载原始文件</Button>{source.extracted_text ? <Button type="link" onClick={() => setPreviewSourceId((current) => current === source.id ? null : source.id)}>{previewSourceId === source.id ? "收起正文" : "查看提取正文"}</Button> : null}{source.parse_status === "可提取文本" || ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(source.mime) ? <Button type="link" disabled={busy} onClick={() => void act(async () => { setFactsOffer({ sourceId: source.id, quote: await studioApi.factsQuote(project.id, source.id) }); })}>{source.mime.startsWith("image/") ? "识图提取候选事实" : "提取候选事实"}</Button> : null}{previewSourceId === source.id ? <Typography.Paragraph className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap">{source.extracted_text}</Typography.Paragraph> : null}</div>)}
                             {factsOffer ? <div><Typography.Text>DeepSeek 提取费用：{factsOffer.quote.estimate == null ? "未知" : factsOffer.quote.estimate}</Typography.Text><Button type="primary" className="ml-2" disabled={busy} onClick={() => void act(async () => { await studioApi.factsRun(project.id, factsOffer.sourceId, factsOffer.quote.fingerprint, crypto.randomUUID()); setFactsOffer(null); })}>确认提取</Button></div> : null}
                         </section>

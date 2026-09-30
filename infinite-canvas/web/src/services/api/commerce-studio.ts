@@ -76,7 +76,11 @@ export const studioApi = {
             reader.onload = () => resolve(String(reader.result).split(",")[1]);
             reader.onerror = () => reject(new Error("无法读取本机文件"));
             reader.readAsDataURL(file);
-        }).then((base64) => request<StudioSource>(`/projects/${id}/sources`, { name: file.name, mime: file.type || "application/octet-stream", base64 })),
+        }).then((base64) => {
+            const extension = file.name.toLowerCase().split(".").at(-1) || "";
+            const fallback: Record<string, string> = { txt: "text/plain", pdf: "application/pdf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif" };
+            return request<StudioSource>(`/projects/${id}/sources`, { name: file.name, mime: file.type || fallback[extension] || "application/octet-stream", base64 });
+        }),
     fact: (id: string, body: { field: string; value: string; source_id?: string; status: StudioFact["status"] }) => request<StudioFact>(`/projects/${id}/facts`, body),
     reviewFact: (id: string, factId: string, status: StudioFact["status"]) => request<StudioFact>(`/projects/${id}/facts/${factId}/review`, { status }),
     factsQuote: (id: string, sourceId: string) => request<StudioQuote>(`/projects/${id}/facts/quote`, { source_id: sourceId }),
