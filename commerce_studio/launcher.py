@@ -46,9 +46,10 @@ def ensure_dependencies():
 def main():
     clear_unusable_proxy()
     ensure_dependencies()
-    from .http import Handler
+    from .http import Handler, STORE
 
     server = ThreadingHTTPServer(("127.0.0.1", 8766), Handler)
+    STORE.reconcile_interrupted_tasks()
     threading.Thread(target=server.serve_forever, daemon=True).start()
     frontend = subprocess.Popen(["npm.cmd", "run", "dev", "--", "--host", "127.0.0.1", "--strictPort"], cwd=WEB)
     try:

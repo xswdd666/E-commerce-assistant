@@ -597,6 +597,17 @@ class CommerceStudioTests(unittest.TestCase):
             self.assertNotIn("HTTPS_PROXY", os.environ)
             self.assertEqual(os.environ["ALL_PROXY"], "http://proxy.example:8080")
 
+    def test_one_click_launcher_reconciles_interrupted_tasks_before_serving(self):
+        self.project["tasks"].append({"id": "restart-task", "kind": "preview", "provider": "SeeAny", "status": "远端运行中"})
+        self.store.save(self.project)
+        with patch.object(launcher, "clear_unusable_proxy"), patch.object(launcher, "ensure_dependencies"), patch.object(bridge, "STORE", self.store), patch.object(launcher, "ThreadingHTTPServer") as server, patch.object(launcher.threading, "Thread") as thread, patch.object(launcher.subprocess, "Popen") as frontend:
+            frontend.return_value.poll.return_value = 0
+            with self.assertRaisesRegex(SystemExit, "画布启动失败"):
+                launcher.main()
+        self.assertEqual(self.store.load(self.project["id"])["tasks"][0]["status"], "待核对")
+        server.return_value.serve_forever.assert_not_called()
+        thread.return_value.start.assert_called_once()
+
     def test_launcher_bootstraps_missing_dependencies_only_once(self):
         web = Path(self.temp.name) / "web"
         web.mkdir()
