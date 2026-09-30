@@ -18,12 +18,29 @@ from . import backup, delivery, finishing, flova_flow, gallery, jev, legacy, obs
 ROOT = Path(__file__).resolve().parent.parent
 STORE = Store(ROOT / "data" / "commerce-studio")
 MAX_BODY = 35 * 1024 * 1024
+ALLOWED_ORIGINS = frozenset({
+    "http://127.0.0.1:3000", "http://localhost:3000",
+    "http://127.0.0.1:5173", "http://localhost:5173",
+})
 
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         # Request bodies, prompts, provider errors and keys must never enter logs.
         pass
+
+    def _trusted_request(self):
+        try:
+            host = urlparse(f"http://{self.headers.get('Host', '')}").hostname
+        except ValueError:
+            host = None
+        origin = self.headers.get("Origin")
+        if (host not in ("127.0.0.1", "localhost")
+                or (origin is not None and origin not in ALLOWED_ORIGINS)
+                or (origin is None and self.headers.get("Sec-Fetch-Site") == "cross-site")):
+            self._send(403, {"error": "请求来源不受信任"})
+            return False
+        return True
 
     def _send(self, code, value):
         raw = json.dumps(value, ensure_ascii=False).encode("utf-8")
@@ -32,7 +49,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Cache-Control", "no-store")
         origin = self.headers.get("Origin", "")
-        if origin in ("http://127.0.0.1:3000", "http://localhost:3000", "http://127.0.0.1:5173", "http://localhost:5173"):
+        if origin in ALLOWED_ORIGINS:
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
         self.end_headers()
@@ -45,7 +62,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Cache-Control", "no-store")
         origin = self.headers.get("Origin", "")
-        if origin in ("http://127.0.0.1:3000", "http://localhost:3000", "http://127.0.0.1:5173", "http://localhost:5173"):
+        if origin in ALLOWED_ORIGINS:
             self.send_header("Access-Control-Allow-Origin", origin)
         self.end_headers()
         self.wfile.write(raw)
@@ -60,16 +77,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(path.stat().st_size))
         self.send_header("Cache-Control", "no-store")
         origin = self.headers.get("Origin", "")
-        if origin in ("http://127.0.0.1:3000", "http://localhost:3000", "http://127.0.0.1:5173", "http://localhost:5173"):
+        if origin in ALLOWED_ORIGINS:
             self.send_header("Access-Control-Allow-Origin", origin)
         self.end_headers()
         with path.open("rb") as archive:
             shutil.copyfileobj(archive, self.wfile, length=1024 * 1024)
 
     def do_OPTIONS(self):
+        if not self._trusted_request():
+            return
         self.send_response(204)
         origin = self.headers.get("Origin", "")
-        if origin in ("http://127.0.0.1:3000", "http://localhost:3000", "http://127.0.0.1:5173", "http://localhost:5173"):
+        if origin in ALLOWED_ORIGINS:
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
@@ -253,6 +272,8 @@ class Handler(BaseHTTPRequestHandler):
         raise ValueError("接口不存在")
 
     def do_GET(self):
+        if not self._trusted_request():
+            return
         try:
             parts = [part for part in urlparse(self.path).path.split("/") if part]
             if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "backup":
@@ -279,6 +300,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"error": str(exc)})
 
     def do_POST(self):
+        if not self._trusted_request():
+            return
         try:
             if urlparse(self.path).path == "/api/restore":
                 length = int(self.headers.get("Content-Length", "0"))

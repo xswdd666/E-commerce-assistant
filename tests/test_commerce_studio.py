@@ -15,6 +15,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 from http.server import ThreadingHTTPServer
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from PIL import Image
@@ -746,6 +747,34 @@ class CommerceStudioTests(unittest.TestCase):
                 self.assertNotEqual(restored["id"], self.project["id"])
                 self.assertEqual(self.store.source_bytes(restored, source["id"])[1], b"merchant facts")
                 self.assertNotIn(b"DEEPSEEK_API_KEY", archive)
+            finally:
+                server.shutdown()
+                server.server_close()
+                worker.join(timeout=2)
+
+    def test_local_bridge_rejects_cross_origin_writes_and_rebinding_hosts(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), bridge.Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        with patch.object(bridge, "STORE", self.store):
+            worker.start()
+            try:
+                url = f"http://127.0.0.1:{server.server_port}/api/projects"
+                body = json.dumps({"name": "不可信项目"}).encode()
+                for headers in (
+                    {"Origin": "https://example.com", "Content-Type": "text/plain"},
+                    {"Host": f"example.com:{server.server_port}", "Content-Type": "application/json"},
+                    {"Sec-Fetch-Site": "cross-site", "Content-Type": "application/json"},
+                ):
+                    with self.subTest(headers=headers):
+                        with self.assertRaises(HTTPError) as failure:
+                            urlopen(Request(url, data=body, headers=headers, method="POST"))
+                        self.assertEqual(failure.exception.code, 403)
+                self.assertEqual(len(self.store.list()), 1)
+                allowed = Request(url, data=json.dumps({"name": "允许项目"}).encode(),
+                                  headers={"Origin": "http://127.0.0.1:3000", "Content-Type": "application/json"}, method="POST")
+                with urlopen(allowed) as response:
+                    self.assertEqual(json.load(response)["name"], "允许项目")
+                self.assertEqual(len(self.store.list()), 2)
             finally:
                 server.shutdown()
                 server.server_close()
