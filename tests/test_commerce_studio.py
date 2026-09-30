@@ -535,7 +535,7 @@ class CommerceStudioTests(unittest.TestCase):
         first = gallery.default_plan(self.store, self.project)
         self.assertEqual(len(first["items"]), 6)
         edited = json.loads(json.dumps(first["items"], ensure_ascii=False))
-        edited[0].update(title="真实白色外观", subtitle="商品主图", x=50, y=12)
+        edited[0].update(kind="主图/精选", title="真实白色外观", subtitle="商品主图", x=50, y=12)
         plan = gallery.save_plan(self.store, self.project, edited, parent_id=first["id"])
         gallery.approve_plan(self.store, self.project, plan["id"])
         item = plan["items"][0]
@@ -563,9 +563,10 @@ class CommerceStudioTests(unittest.TestCase):
             names = archive.namelist()
             self.assertEqual(sum(name.endswith(".png") for name in names), 6)
             self.assertEqual(sum(name.endswith(".svg") for name in names), 6)
-            self.assertIn("真实白色外观", archive.read("gallery/01-主图.svg").decode())
+            self.assertIn("真实白色外观", archive.read("gallery/01-主图_精选.svg").decode())
             manifest = json.loads(archive.read("source-manifest.json"))
             self.assertEqual(manifest["images"][0]["source_id"], generated["id"])
+            self.assertEqual(manifest["images"][0]["kind"], "主图/精选")
 
     def test_gallery_planning_uses_only_confirmed_facts_and_blocks_ambiguous_repeat(self):
         self.approved_project()

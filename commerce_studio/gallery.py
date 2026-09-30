@@ -7,6 +7,7 @@ import copy
 import html
 import io
 import json
+import re
 import zipfile
 from pathlib import Path
 
@@ -271,7 +272,8 @@ def export_gallery(store, project):
                                 f'stroke="black" stroke-width="{stroke * 2}" paint-order="stroke">{html.escape(content)}</text>')
             png = io.BytesIO()
             image.save(png, format="PNG")
-            name = f"{index:02d}-{item['kind']}"
+            safe_kind = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", item["kind"]).strip(" .") or "图片"
+            name = f"{index:02d}-{safe_kind}"
             output.writestr(f"gallery/{name}.png", png.getvalue())
             embedded = base64.b64encode(raw).decode("ascii")
             svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">'
