@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 
 from app import flova
 from .core import fingerprint, ident, stamp
+from . import finishing
 
 
 ACTIVE = set()
@@ -57,27 +58,33 @@ def _download_video(store, project, task, export_url, transport=None):
     temporary = target.with_suffix(".part")
     digest = hashlib.sha256()
     size = 0
-    with (transport or urlopen)(Request(export_url, headers={"User-Agent": "commerce-studio"}), timeout=180) as response, temporary.open("wb") as output:
-        while chunk := response.read(4 * 1024 * 1024):
-            size += len(chunk)
-            if size > MAX_VIDEO_BYTES:
-                raise ValueError("Flova 成片超过本地支持的 2 GB")
-            output.write(chunk)
-            digest.update(chunk)
-    if not size:
-        raise ValueError("Flova 成片下载为空")
-    temporary.replace(target)
-    deliverable = {"id": deliverable_id, "kind": "video", "task_id": task["id"], "name": "flova-final.mp4",
-                   "bytes": size, "sha256": digest.hexdigest(), "created": stamp()}
-    with store.lock:
-        latest = store.load(project["id"])
-        latest_task = next(t for t in latest["tasks"] if t["id"] == task["id"])
-        latest["deliverables"].append(deliverable)
-        latest_task["deliverable_id"] = deliverable_id
-        latest_task["status"] = "待审核"
-        latest_task["updated"] = stamp()
-        store.save(latest)
-    return deliverable
+    try:
+        with (transport or urlopen)(Request(export_url, headers={"User-Agent": "commerce-studio"}), timeout=180) as response, temporary.open("wb") as output:
+            while chunk := response.read(4 * 1024 * 1024):
+                size += len(chunk)
+                if size > MAX_VIDEO_BYTES:
+                    raise ValueError("Flova 成片超过本地支持的 2 GB")
+                output.write(chunk)
+                digest.update(chunk)
+        if not size:
+            raise ValueError("Flova 成片下载为空")
+        video_info = finishing.probe_file(temporary)
+        temporary.replace(target)
+        deliverable = {"id": deliverable_id, "kind": "video", "task_id": task["id"], "name": "flova-final.mp4",
+                       "bytes": size, "sha256": digest.hexdigest(), "duration": video_info["duration"], "created": stamp()}
+        with store.lock:
+            latest = store.load(project["id"])
+            latest_task = next(t for t in latest["tasks"] if t["id"] == task["id"])
+            latest["deliverables"].append(deliverable)
+            latest_task["deliverable_id"] = deliverable_id
+            latest_task["status"] = "待审核"
+            latest_task["updated"] = stamp()
+            store.save(latest)
+        return deliverable
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        target.unlink(missing_ok=True)
+        raise
 
 
 def _finish(store, project_id, task_id, result):

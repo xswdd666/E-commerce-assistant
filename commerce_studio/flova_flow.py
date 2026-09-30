@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from app import flova
+from . import finishing
 from .core import fingerprint, ident, stamp
 
 
@@ -691,6 +692,7 @@ def pull_video_resource(store, project, resource_id, transport=None):
                 digest.update(chunk)
         if not size:
             raise ValueError("Flova 镜头下载为空")
+        video_info = finishing.probe_file(temporary)
         temporary.replace(target)
     except ValueError:
         raise
@@ -700,7 +702,7 @@ def pull_video_resource(store, project, resource_id, transport=None):
         temporary.unlink(missing_ok=True)
     deliverable = {"id": deliverable_id, "kind": "shot_video", "resource_id": resource_id,
                    "name": str(available.get("name") or f"flova-shot-{resource_id}.mp4")[:200],
-                   "bytes": size, "sha256": digest.hexdigest(), "created": stamp()}
+                   "bytes": size, "sha256": digest.hexdigest(), "duration": video_info["duration"], "created": stamp()}
     with store.lock:
         latest = store.load(project["id"])
         previous = next((d for d in latest["deliverables"] if d.get("kind") == "shot_video" and d.get("resource_id") == resource_id), None)

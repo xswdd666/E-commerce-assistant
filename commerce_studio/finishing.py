@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import shutil
 import subprocess
 import tempfile
@@ -24,23 +25,37 @@ def _source_path(store, project, deliverable_id):
     if not item:
         raise ValueError("镜头来源必须是本地 Flova 成片或已收尾视频")
     path = store.root / "deliverables" / project["id"] / f"{deliverable_id}.mp4"
-    if hashlib.sha256(path.read_bytes()).hexdigest() != item["sha256"]:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    if digest.hexdigest() != item["sha256"]:
         raise ValueError("镜头来源文件校验失败")
     return path
 
 
 def probe(store, project, deliverable_id):
-    _, ffprobe = _tools()
-    path = _source_path(store, project, deliverable_id)
-    result = subprocess.run([ffprobe, "-v", "error", "-show_entries", "format=duration:stream=codec_type", "-of", "json", str(path)],
+    return probe_file(_source_path(store, project, deliverable_id))
+
+
+def probe_file(path):
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        raise ValueError("视频校验需要 FFprobe")
+    result = subprocess.run([ffprobe, "-v", "error", "-show_entries", "format=duration,format_name:stream=codec_type", "-of", "json", str(path)],
                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
     if result.returncode:
         raise ValueError("本地视频无法读取")
-    data = json.loads(result.stdout)
+    try:
+        data = json.loads(result.stdout)
+        duration = float(data["format"]["duration"])
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ValueError("本地视频信息无效") from exc
     if not any(s.get("codec_type") == "video" for s in data.get("streams", [])):
         raise ValueError("本地文件没有视频轨")
-    duration = float(data["format"]["duration"])
-    if duration <= 0:
+    if "mp4" not in data["format"].get("format_name", "").split(","):
+        raise ValueError("本地文件不是 MP4 视频")
+    if not math.isfinite(duration) or duration <= 0:
         raise ValueError("视频时长无效")
     return {"duration": duration, "audio": any(s.get("codec_type") == "audio" for s in data.get("streams", []))}
 

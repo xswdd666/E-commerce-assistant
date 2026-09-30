@@ -313,20 +313,31 @@ class CommerceStudioTests(unittest.TestCase):
         self.assertEqual(flova_flow.quote(self.project)["input_snapshot"]["master_id"], verified["id"])
 
     def test_flova_shot_resource_download_is_idempotent_and_backed_up(self):
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg or not shutil.which("ffprobe"):
+            self.skipTest("FFmpeg unavailable")
+        sample = Path(self.temp.name) / "shot.mp4"
+        completed = subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=blue:s=64x64:d=0.5:r=10", "-c:v", "mpeg4", str(sample)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        raw_video = sample.read_bytes()
         self.project["external"]["flova_project_id"] = "remote-project"
         inventory = {"items": [{"resource_id": "shot-one", "media_type": "video", "name": "镜头一.mp4"}]}
         details = {"data": {"resource_url": "https://example.com/shot-one.mp4"}}
         with patch.object(flova_flow.flova, "invoke", side_effect=[inventory, details]) as command:
-            item = flova_flow.pull_video_resource(self.store, self.project, "shot-one", transport=lambda *args, **kwargs: io.BytesIO(b"mock-mp4"))
+            item = flova_flow.pull_video_resource(self.store, self.project, "shot-one", transport=lambda *args, **kwargs: io.BytesIO(raw_video))
             same = flova_flow.pull_video_resource(self.store, self.project, "shot-one")
         self.assertEqual(item["id"], same["id"])
         self.assertEqual(item["kind"], "shot_video")
         self.assertEqual(command.call_count, 2)
-        self.assertEqual(video_export.deliverable_bytes(self.store, self.project, item["id"]), b"mock-mp4")
+        self.assertEqual(video_export.deliverable_bytes(self.store, self.project, item["id"]), raw_video)
+        bad_inventory = {"items": [{"resource_id": "bad-shot", "media_type": "video", "name": "错误镜头.mp4"}]}
+        with patch.object(flova_flow.flova, "invoke", side_effect=[bad_inventory, {"data": {"resource_url": "https://example.com/bad.mp4"}}]):
+            with self.assertRaisesRegex(ValueError, "本地视频无法读取"):
+                flova_flow.pull_video_resource(self.store, self.project, "bad-shot", transport=lambda *args, **kwargs: io.BytesIO(b"<html>error</html>"))
         with zipfile.ZipFile(io.BytesIO(backup.export_project(self.store, self.project))) as archive:
-            self.assertEqual(archive.read(f"deliverables/{item['id']}.mp4"), b"mock-mp4")
+            self.assertEqual(archive.read(f"deliverables/{item['id']}.mp4"), raw_video)
         restored = backup.restore_project(self.store, backup.export_project(self.store, self.project))
-        self.assertEqual(video_export.deliverable_bytes(self.store, restored, item["id"]), b"mock-mp4")
+        self.assertEqual(video_export.deliverable_bytes(self.store, restored, item["id"]), raw_video)
 
     def test_flova_run_uses_approved_storyboard_and_blocks_duplicate_round(self):
         self.approved_project()
@@ -595,6 +606,13 @@ class CommerceStudioTests(unittest.TestCase):
         self.assertEqual(task["status"], "待用户确认")
 
     def test_flova_export_requires_review_and_keeps_final_video_local(self):
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg or not shutil.which("ffprobe"):
+            self.skipTest("FFmpeg unavailable")
+        sample = Path(self.temp.name) / "final.mp4"
+        completed = subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=blue:s=64x96:d=1:r=10", "-c:v", "mpeg4", str(sample)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        raw_video = sample.read_bytes()
         self.approved_project()
         self.project["external"]["flova_project_id"] = "remote-project"
         master_id = self.project["master_versions"][-1]["id"]
@@ -618,15 +636,22 @@ class CommerceStudioTests(unittest.TestCase):
             with patch.object(video_export.threading, "Thread") as thread:
                 export_task = video_export.run(self.store, self.project, {"approved_fingerprint": offer["fingerprint"], "request_id": "export-request-123"})
             thread.assert_called_once()
-        with patch.object(video_export, "urlopen", side_effect=lambda *_args, **_kwargs: io.BytesIO(b"valid nonempty mp4 bytes")):
+        with patch.object(video_export, "urlopen", side_effect=lambda *_args, **_kwargs: io.BytesIO(b"<html>not a video</html>")):
+            video_export._finish(self.store, self.project["id"], export_task["id"], {"task_id": "export-remote", "status": "completed", "terminal": True, "export_url": "https://flova.example/final.mp4"})
+        rejected = self.store.load(self.project["id"])
+        self.assertEqual(rejected["tasks"][-1]["status"], "待下载")
+        self.assertEqual(rejected["deliverables"], [])
+        self.assertFalse(list((self.store.root / "deliverables" / self.project["id"]).glob("*.part")))
+        with patch.object(video_export, "urlopen", side_effect=lambda *_args, **_kwargs: io.BytesIO(raw_video)):
             video_export._finish(self.store, self.project["id"], export_task["id"], {"task_id": "export-remote", "status": "completed", "terminal": True, "export_url": "https://flova.example/final.mp4"})
         restored = self.store.load(self.project["id"])
         self.assertEqual(restored["tasks"][-1]["status"], "待审核")
         self.assertEqual(len(restored["deliverables"]), 1)
-        self.assertEqual(video_export.deliverable_bytes(self.store, restored, restored["deliverables"][0]["id"]), b"valid nonempty mp4 bytes")
+        self.assertEqual(video_export.deliverable_bytes(self.store, restored, restored["deliverables"][0]["id"]), raw_video)
+        self.assertAlmostEqual(restored["deliverables"][0]["duration"], 1, delta=0.2)
         archive = backup.export_project(self.store, restored)
         imported = backup.restore_project(self.store, archive)
-        self.assertEqual(video_export.deliverable_bytes(self.store, imported, imported["deliverables"][0]["id"]), b"valid nonempty mp4 bytes")
+        self.assertEqual(video_export.deliverable_bytes(self.store, imported, imported["deliverables"][0]["id"]), raw_video)
         video_export.ACTIVE.discard(self.project["id"])
 
     def test_local_finishing_trims_speeds_and_preserves_original(self):
