@@ -408,9 +408,10 @@ class CommerceStudioTests(unittest.TestCase):
         task = {"id": "local-task", "provider": "Flova", "status": "待核对", "remote_id": "this-run",
                 "input_snapshot": {"flova_project_id": "remote-project"}}
         self.project["tasks"].append(task)
-        with patch.object(flova_flow.flova, "recover", return_value={"terminal": True, "stream_chat_id": "older-run"}), patch.object(flova_flow.flova, "run_result", return_value={"status": "completed", "terminal": True, "stream_chat_id": "this-run", "pending_actions": []}) as detail:
+        with patch.object(flova_flow.flova, "recover", return_value={"terminal": True, "stream_chat_id": "older-run"}), patch.object(flova_flow.flova, "run_result", return_value={"status": "completed", "terminal": True, "stream_chat_id": "this-run", "pending_actions": [], "project_url": "https://www.flova.tv/project/?id=remote-project"}) as detail:
             recovered = flova_flow.recover(self.store, self.project, task["id"])
         self.assertEqual(recovered["status"], "待审核")
+        self.assertEqual(self.store.load(self.project["id"])["external"]["flova_project_url"], "https://www.flova.tv/project/?id=remote-project")
         detail.assert_called_once_with("remote-project", "this-run")
 
     def test_flova_terminal_failure_is_not_presented_as_reviewable_video(self):

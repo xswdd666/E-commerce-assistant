@@ -32,6 +32,18 @@ def _apply_run_result(task, result):
     return task
 
 
+def _remember_project_url(project, result):
+    url = result.get("project_url")
+    if not isinstance(url, str):
+        return
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return
+    if parsed.scheme == "https" and parsed.hostname:
+        project["external"]["flova_project_url"] = url
+
+
 def create_project(store, project):
     if project["external"]["flova_project_id"]:
         raise ValueError("已关联 Flova 项目")
@@ -166,6 +178,7 @@ def _run_worker(store, project_id, task_id):
             project = store.load(project_id)
             task = next(t for t in project["tasks"] if t["id"] == task_id)
             _apply_run_result(task, result)
+            _remember_project_url(project, result)
             store.save(project)
     except Exception as exc:
         with store.lock:
@@ -264,6 +277,7 @@ def recover(store, project, task_id):
         store.save(project)
         return task
     _apply_run_result(task, result)
+    _remember_project_url(project, result)
     store.save(project)
     return task
 
