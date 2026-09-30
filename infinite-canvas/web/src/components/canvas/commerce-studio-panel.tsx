@@ -48,6 +48,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
     const [previewRequest, setPreviewRequest] = useState<PreviewRequest | null>(null);
     const [canvasFlovaOffer, setCanvasFlovaOffer] = useState<StudioQuote | null>(null);
     const [canvasFlovaRequest, setCanvasFlovaRequest] = useState<FlovaCanvasContext | null>(null);
+    const [canvasFlovaShotId, setCanvasFlovaShotId] = useState<string | null>(null);
     const [previewRatio, setPreviewRatio] = useState("1:1");
     const [comparison, setComparison] = useState<{ original: string; generated: string } | null>(null);
     const [previewComparison, setPreviewComparison] = useState<{ taskId: string; original: string; generated: string } | null>(null);
@@ -57,6 +58,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
     const [resolutionNote, setResolutionNote] = useState("");
 
     useEffect(() => { setPreviewQuote(null); setPreviewRequest(null); setCanvasFlovaOffer(null); setCanvasFlovaRequest(null); }, [nodes, connections, selectedNodeId, previewRatio]);
+    useEffect(() => { setCanvasFlovaShotId(null); setCanvasFlovaOffer(null); setCanvasFlovaRequest(null); }, [project?.storyboard_approval]);
     useEffect(() => { if (project) onProjectChange(project); }, [project, onProjectChange]);
 
     useEffect(() => {
@@ -119,6 +121,10 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
     for (const cost of selectedCosts) if (cost.actual != null && cost.currency) selectedSpend.set(cost.currency, (selectedSpend.get(cost.currency) || 0) + cost.actual);
     const confirmed = project?.facts.filter((fact) => fact.status === "已知事实") || [];
     const currentMaster = project?.master_versions.at(-1);
+    const currentStoryboard = project?.storyboard_versions.find((item) => item.id === project.storyboard_approval);
+    const canvasShotIndex = currentStoryboard?.shots.findIndex((shot) => shot.id === canvasFlovaShotId) ?? -1;
+    const canvasShotReady = !canvasFlovaShotId || Boolean(currentStoryboard && canvasShotIndex >= 0 && !project?.shot_approvals[canvasFlovaShotId]
+        && currentStoryboard.shots.slice(0, canvasShotIndex).every((shot) => project?.shot_approvals[shot.id]?.storyboard_id === currentStoryboard.id));
     const masterRequest: MasterRequest = { group: candidateGroup, view_label: viewLabel, views: viewPreset, source_id: candidateSourceId || "" };
     const candidates = project?.sources.filter((source) => source.origin === "SeeAny candidate") || [];
     const downloadSource = async (sourceId: string) => {
@@ -260,7 +266,8 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                             <Typography.Paragraph type="secondary" className="mt-2">连线仅编辑画布。任务提交前需查看实际输入和费用；未知费用不会自动提交。</Typography.Paragraph>
                             {selected?.type === CanvasNodeType.Config ? <Space direction="vertical" className="mt-2 w-full">
                                 {selected.metadata?.generationMode === "video" ? <>
-                                    <Button disabled={busy || !project.storyboard_approval} onClick={() => void act(async () => {
+                                    <Select value={canvasFlovaShotId || ""} onChange={(value) => { setCanvasFlovaShotId(value || null); setCanvasFlovaOffer(null); setCanvasFlovaRequest(null); }} options={[{ value: "", label: "整片创作" }, ...(currentStoryboard?.shots || []).map((shot, index) => ({ value: shot.id, label: `镜头 ${index + 1}：${shot.visual.slice(0, 20)}` }))]} />
+                                    <Button disabled={busy || !project.storyboard_approval || !canvasShotReady} onClick={() => void act(async () => {
                                         setCanvasFlovaOffer(null);
                                         setCanvasFlovaRequest(null);
                                         const context = await hydrateNodeGenerationContext(buildNodeGenerationContext(selected.id, nodes, connections, selected.metadata?.composerContent || selected.metadata?.prompt || ""));
@@ -281,14 +288,14 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                                                 sha256: [...new Uint8Array(await crypto.subtle.digest("SHA-256", await (await fetch(image.dataUrl)).arrayBuffer()))].map((byte) => byte.toString(16).padStart(2, "0")).join("") }))),
                                             reference_media: mediaReferences };
                                         setCanvasFlovaRequest(request);
-                                        setCanvasFlovaOffer(await studioApi.flovaQuote(project.id, request));
-                                    })}>按当前视频连线查看 Flova 输入</Button>
+                                        setCanvasFlovaOffer(await (canvasFlovaShotId ? studioApi.flovaShotQuote(project.id, canvasFlovaShotId, request) : studioApi.flovaQuote(project.id, request)));
+                                    })}>按当前视频连线查看 Flova {canvasFlovaShotId ? "单镜" : "整片"}输入</Button>
                                     {canvasFlovaOffer && canvasFlovaRequest?.config_node_id === selected.id ? <div>
                                         <Typography.Paragraph className="whitespace-pre-wrap">画布提示词：{canvasFlovaRequest.prompt}</Typography.Paragraph>
                                         <Typography.Paragraph>连线 {canvasFlovaRequest.connection_ids.length} 条；已审核参考图 {canvasFlovaRequest.reference_images.length} 张；音视频参考 {canvasFlovaRequest.reference_media.length} 份；已批准分镜 {String((canvasFlovaOffer.input_snapshot as { storyboard_id: string }).storyboard_id).slice(0, 12)}；费用：{canvasFlovaOffer.estimate == null ? "未知" : canvasFlovaOffer.estimate}</Typography.Paragraph>
                                         {(canvasFlovaOffer.input_snapshot as { assets: Array<{ id: string; kind: string; view: string; node_id?: string }> }).assets.map((item) => <Tag key={item.id}>{item.kind === "master" ? "母版图" : item.kind === "scene" ? "已采用场景图" : "场景图原始参考"} · {item.node_id ? nodeNames[item.node_id] || item.view : item.view}</Tag>)}
                                         {canvasFlovaRequest.reference_media.map((item) => <Tag key={item.source_id}>{item.kind === "video" ? "视频" : "音频"} · {nodeNames[item.node_id] || item.node_id}</Tag>)}
-                                        <Button type="primary" disabled={busy} onClick={() => void act(async () => { await studioApi.flovaRun(project.id, canvasFlovaOffer.fingerprint, crypto.randomUUID(), canvasFlovaRequest); setCanvasFlovaOffer(null); setCanvasFlovaRequest(null); })}>确认按此画布输入提交 Flova 整片</Button>
+                                        <Button type="primary" disabled={busy} onClick={() => void act(async () => { if (canvasFlovaShotId) await studioApi.flovaShotRun(project.id, canvasFlovaShotId, canvasFlovaOffer.fingerprint, crypto.randomUUID(), canvasFlovaRequest); else await studioApi.flovaRun(project.id, canvasFlovaOffer.fingerprint, crypto.randomUUID(), canvasFlovaRequest); setCanvasFlovaOffer(null); setCanvasFlovaRequest(null); })}>确认按此画布输入提交 Flova {canvasFlovaShotId ? "单镜" : "整片"}</Button>
                                     </div> : null}
                                 </> : null}
                                 {selected.metadata?.generationMode !== "video" ? <><Select value={previewRatio} onChange={setPreviewRatio} options={["1:1", "3:4", "4:3", "9:16", "16:9", "3:2", "2:3"].map((ratio) => ({ value: ratio, label: ratio }))} />

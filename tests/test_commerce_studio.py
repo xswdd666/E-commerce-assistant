@@ -444,16 +444,25 @@ class CommerceStudioTests(unittest.TestCase):
         first, second = (shot["id"] for shot in board["shots"])
         with self.assertRaisesRegex(ValueError, "前面的镜头"):
             flova_flow.shot_quote(self.project, second)
-        offer = flova_flow.shot_quote(self.project, first)
+        first_source = next(source for source in self.project["sources"] if source["id"] == master["asset_ids"][0])
+        canvas = {"canvas_project_id": "canvas-1", "config_node_id": "shot-video-config", "connection_ids": ["shot-image-edge"],
+                  "prompt": "本镜头以厨房晨光展示正面", "reference_images": [{"node_id": "image-front", "sha256": first_source["sha256"]}], "reference_media": []}
+        offer = flova_flow.shot_quote(self.project, first, canvas)
+        self.assertEqual([asset["id"] for asset in offer["input_snapshot"]["assets"]], [first_source["id"]])
+        with self.assertRaisesRegex(ValueError, "重新查看快照"):
+            flova_flow.run_shot(self.store, self.project, {"shot_id": first, "canvas_context": {**canvas, "prompt": "已改变"},
+                                                          "approved_fingerprint": offer["fingerprint"], "request_id": "shot-request-111"})
         with patch.object(flova_flow.threading, "Thread"):
-            first_task = flova_flow.run_shot(self.store, self.project, {"shot_id": first, "approved_fingerprint": offer["fingerprint"], "request_id": "shot-request-111"})
+            first_task = flova_flow.run_shot(self.store, self.project, {"shot_id": first, "canvas_context": canvas, "approved_fingerprint": offer["fingerprint"], "request_id": "shot-request-111"})
             self.assertEqual(flova_flow.run_shot(self.store, self.project, {"shot_id": first, "approved_fingerprint": offer["fingerprint"], "request_id": "shot-request-111"})["id"], first_task["id"])
+        self.assertEqual(first_task["node_id"], "shot-video-config")
         with patch.object(flova_flow, "_upload"), patch.object(flova_flow.flova, "invoke", return_value={"status": "completed", "terminal": True, "stream_chat_id": "shot-one-run", "pending_actions": []}) as remote:
             flova_flow._run_worker(self.store, self.project["id"], first_task["id"])
         prompt = remote.call_args.args[3]
         self.assertIn("仅制作", prompt)
         self.assertIn("第 1 个镜头", prompt)
         self.assertNotIn("第 2 个镜头", prompt)
+        self.assertIn("画布输入", prompt)
         self.project = self.store.load(self.project["id"])
         flova_flow.approve_shot(self.store, self.project, first_task["id"])
         offer = flova_flow.shot_quote(self.project, second)
@@ -537,12 +546,17 @@ class CommerceStudioTests(unittest.TestCase):
     def test_flova_export_requires_review_and_keeps_final_video_local(self):
         self.approved_project()
         self.project["external"]["flova_project_id"] = "remote-project"
-        brief_id = self.project["brief_versions"][-1]["id"]
         master_id = self.project["master_versions"][-1]["id"]
-        storyboard_id = "approved-storyboard"
-        self.project["storyboard_approval"] = storyboard_id
+        brief_id = self.project["brief_versions"][-1]["id"]
+        self.project["directions"].append({"id": "direction-export", "brief_id": brief_id, "master_id": master_id})
+        self.store.approve_direction(self.project, "direction-export")
+        script = self.store.add_script(self.project, "产品展示脚本")
+        self.store.approve_script(self.project, script["id"])
+        board = self.store.add_storyboard(self.project, [{"visual": "产品正面", "duration": 3,
+                                                        "reference_asset_id": self.project["master_versions"][-1]["asset_ids"][0]}])
+        self.store.approve_storyboard(self.project, board["id"])
         run_task = {"id": "creative-run", "kind": "video", "provider": "Flova", "status": "待审核", "remote_id": "stream-123",
-                    "input_snapshot": {"flova_project_id": "remote-project", "brief_id": brief_id, "master_id": master_id, "storyboard_id": storyboard_id},
+                    "input_snapshot": flova_flow.quote(self.project)["input_snapshot"],
                     "pending_actions": [], "estimate": None, "actual": None, "currency": None, "created": "2026-09-29T00:00:00+00:00"}
         self.project["tasks"].append(run_task)
         with self.assertRaisesRegex(ValueError, "批准导出"):

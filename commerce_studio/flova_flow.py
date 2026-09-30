@@ -225,7 +225,7 @@ def _canvas_input(project, body):
             "connection_ids": edges, "prompt": prompt.strip(), "reference_images": selected, "reference_media": selected_media}
 
 
-def quote(project, canvas_context=None):
+def quote(project, canvas_context=None, required_asset_ids=None):
     project_id = project["external"]["flova_project_id"]
     storyboard_id = project["storyboard_approval"]
     if not project_id or not storyboard_id or not project["master_versions"] or not project["brief_versions"]:
@@ -241,11 +241,14 @@ def quote(project, canvas_context=None):
         raise ValueError("分镜含未核实的推断细节，请重新审核")
     sources = {s["id"]: s for s in project["sources"]}
     canvas_input = _canvas_input(project, canvas_context)
+    required = set(required_asset_ids) if required_asset_ids is not None else {shot["reference_asset_id"] for shot in storyboard["shots"]}
     selected_ids = {item["source_id"] for item in canvas_input["reference_images"] if item["kind"] == "master"} if canvas_input else set(master["asset_ids"])
-    if canvas_input and not {shot["reference_asset_id"] for shot in storyboard["shots"]}.issubset(selected_ids):
+    if canvas_input and not required.issubset(selected_ids):
         raise ValueError("画布连线参考图缺少已批准分镜使用的母版视角")
+    if canvas_input and required_asset_ids is not None:
+        canvas_input = {**canvas_input, "reference_images": [item for item in canvas_input["reference_images"] if item["kind"] == "scene" or item["source_id"] in required]}
     assets = ([{"id": item["source_id"], "sha256": item["sha256"], "view": item["view"], "kind": item["kind"], "node_id": item["node_id"]} for item in canvas_input["reference_images"]]
-              if canvas_input else [{"id": asset_id, "sha256": sources[asset_id]["sha256"], "view": sources[asset_id]["view_label"], "kind": "master"} for asset_id in master["asset_ids"]])
+              if canvas_input else [{"id": asset_id, "sha256": sources[asset_id]["sha256"], "view": sources[asset_id]["view_label"], "kind": "master"} for asset_id in master["asset_ids"] if required_asset_ids is None or asset_id in required])
     if canvas_input:
         master_hashes = {sources[asset_id]["sha256"] for asset_id in master["asset_ids"]}
         uploaded_hashes = {asset["sha256"] for asset in assets}
@@ -267,9 +270,10 @@ def quote(project, canvas_context=None):
             "requires_explicit_run": True}
 
 
-def shot_quote(project, shot_id):
-    offer = quote(project)
-    storyboard = next(s for s in project["storyboard_versions"] if s["id"] == project["storyboard_approval"])
+def shot_quote(project, shot_id, canvas_context=None):
+    storyboard = next((s for s in project["storyboard_versions"] if s["id"] == project["storyboard_approval"]), None)
+    if not storyboard:
+        raise ValueError("请先批准完整分镜")
     found = next(((index, shot) for index, shot in enumerate(storyboard["shots"]) if shot["id"] == shot_id), None)
     if not found:
         raise ValueError("镜头不在当前已批准分镜中")
@@ -278,12 +282,34 @@ def shot_quote(project, shot_id):
         raise ValueError("请先完成并审核前面的镜头")
     if shot_id in project["shot_approvals"]:
         raise ValueError("此镜头已批准；如需修改请先保存新的分镜版本")
+    offer = quote(project, canvas_context, {shot["reference_asset_id"]})
     snapshot = dict(offer["input_snapshot"])
-    snapshot.update(shot_id=shot_id, shot_index=index, shot=shot,
-                    assets=[asset for asset in snapshot["assets"] if asset["id"] == shot["reference_asset_id"]])
+    snapshot.update(shot_id=shot_id, shot_index=index, shot=shot)
     offer["input_snapshot"] = snapshot
     offer["fingerprint"] = fingerprint(snapshot)
     return offer
+
+
+def _canvas_request_from_snapshot(snapshot):
+    saved = snapshot.get("canvas_input")
+    if not saved:
+        return None
+    return {"canvas_project_id": saved["canvas_project_id"], "config_node_id": saved["config_node_id"],
+            "connection_ids": saved["connection_ids"], "prompt": saved["prompt"],
+            "reference_images": [{"node_id": item["node_id"], "sha256": item["sha256"]} for item in saved["reference_images"]],
+            "reference_media": [{"node_id": item["node_id"], "source_id": item["source_id"],
+                                 "sha256": item["sha256"], "kind": item["kind"]} for item in saved["reference_media"]]}
+
+
+def _current_shot_snapshot(project, saved):
+    storyboard = next((item for item in project["storyboard_versions"] if item["id"] == project["storyboard_approval"]), None)
+    found = next(((index, shot) for index, shot in enumerate(storyboard["shots"]) if shot["id"] == saved.get("shot_id")), None) if storyboard else None
+    if not found:
+        raise ValueError("镜头上游版本已变化，请重新审核")
+    index, shot = found
+    snapshot = dict(quote(project, _canvas_request_from_snapshot(saved), {shot["reference_asset_id"]})["input_snapshot"])
+    snapshot.update(shot_id=shot["id"], shot_index=index, shot=shot)
+    return snapshot
 
 
 def _upload(path: Path, envelope_path: Path):
@@ -361,8 +387,10 @@ def _run_worker(store, project_id, task_id):
                 envelopes.extend(["--file-from", str(envelope_path)])
             if task["kind"] == "video_shot":
                 prompt = (f"请仅制作已上传文件中的第 {snapshot['shot_index']+1} 个镜头，目标 {snapshot['shot']['duration']} 秒，9:16 竖屏。"
-                          "只使用本次上传的已确认事实与母版参考，不生成或改动其他镜头，不导出成片。"
+                          "只使用本次上传的已确认事实与参考图，不生成或改动其他镜头，不导出成片。"
                           "静音时也要能理解；未核实结构不能作为特写或卖点。完成后呈现该镜头供人工审核。")
+                if snapshot.get("canvas_input"):
+                    prompt += "同时遵守 approved-plan.txt 中的画布输入。scene 图片是已采用的场景参考，evidence 图片是其原始参考，canvas-video 和 canvas-audio 文件是画布连线的音视频参考；与已批准分镜冲突时以分镜为准。"
             else:
                 prompt = ("请依据已上传的产品事实、批准脚本、完整分镜与已审核参考图，在当前 Flova 项目制作约 15 秒 9:16 竖屏商品详情页视频。"
                           "上传的 approved-plan.txt 是正式脚本、分镜与采用图的实际提示词及来源，master 图片是同一真实商品的已确认母版，scene 图片是人工采用的场景参考，evidence 图片是场景图的原始参考。"
@@ -431,7 +459,7 @@ def run_shot(store, project, body):
     existing = next((t for t in project["tasks"] if t.get("idempotency_key") == request_id), None)
     if existing:
         return existing
-    offer = shot_quote(project, body.get("shot_id"))
+    offer = shot_quote(project, body.get("shot_id"), body.get("canvas_context"))
     if body.get("approved_fingerprint") != offer["fingerprint"]:
         raise ValueError("镜头输入已变化，请重新查看快照")
     snapshot = offer["input_snapshot"]
@@ -451,6 +479,8 @@ def run_shot(store, project, body):
             "idempotency_key": request_id, "input_snapshot": snapshot, "estimate": None,
             "actual": None, "currency": None, "remote_id": None, "attempts": len(previous) + 1,
             "created": stamp(), "updated": stamp()}
+    if snapshot.get("canvas_input"):
+        task["node_id"] = snapshot["canvas_input"]["config_node_id"]
     project["video_approval"] = None
     project["tasks"].append(task)
     store.save(project)
@@ -644,6 +674,8 @@ def approve_video(store, project, task_id):
         raise ValueError("请先等待 Flova 本轮成功完成并人工核对镜头")
     if any(action.get("blocking") for action in task.get("pending_actions") or []):
         raise ValueError("Flova 尚有待用户确认的操作")
+    if quote(project, _canvas_request_from_snapshot(task["input_snapshot"]))["fingerprint"] != fingerprint(task["input_snapshot"]):
+        raise ValueError("视频上游版本已变化，请重新审核")
     project["video_approval"] = {"task_id": task_id, "stream_chat_id": task["remote_id"], "approved_at": stamp(), "reviewer": "local"}
     store.save(project)
     return project["video_approval"]
@@ -655,8 +687,7 @@ def approve_shot(store, project, task_id):
         raise ValueError("请先等待当前镜头完成并在 Flova 人工核对")
     if any(action.get("blocking") for action in task.get("pending_actions") or []):
         raise ValueError("Flova 尚有待用户确认的操作")
-    offer = shot_quote(project, task["input_snapshot"]["shot_id"])
-    if offer["fingerprint"] != fingerprint(task["input_snapshot"]):
+    if fingerprint(_current_shot_snapshot(project, task["input_snapshot"])) != fingerprint(task["input_snapshot"]):
         raise ValueError("镜头上游版本已变化，请重新审核")
     shot_id = task["input_snapshot"]["shot_id"]
     project["shot_approvals"][shot_id] = {"task_id": task_id, "stream_chat_id": task["remote_id"],
@@ -666,7 +697,6 @@ def approve_shot(store, project, task_id):
 
 
 def approve_shot_sequence(store, project):
-    offer = quote(project)
     storyboard = next(s for s in project["storyboard_versions"] if s["id"] == project["storyboard_approval"])
     approvals = project["shot_approvals"]
     if any(shot["id"] not in approvals or approvals[shot["id"]]["storyboard_id"] != storyboard["id"] for shot in storyboard["shots"]):
@@ -678,8 +708,7 @@ def approve_shot_sequence(store, project):
         if not task or task["status"] != "待审核" or task.get("remote_id") != approval["stream_chat_id"]:
             raise ValueError("逐镜审核任务已变化，请重新核对")
         inputs = task.get("input_snapshot") or {}
-        if (inputs.get("shot_id") != shot["id"] or inputs.get("shot_index") != index or inputs.get("shot") != shot or
-                any(inputs.get(key) != offer["input_snapshot"].get(key) for key in ("flova_project_id", "brief_id", "master_id", "script_id", "storyboard_id"))):
+        if fingerprint(_current_shot_snapshot(project, inputs)) != fingerprint(inputs):
             raise ValueError("逐镜输入已变化，请重新审核")
     project["video_approval"] = {"task_id": task["id"], "stream_chat_id": task["remote_id"],
                                  "storyboard_id": storyboard["id"], "mode": "shots", "approved_at": stamp(), "reviewer": "local"}
