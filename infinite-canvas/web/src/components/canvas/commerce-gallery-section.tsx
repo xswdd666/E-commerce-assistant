@@ -76,7 +76,7 @@ export function CommerceGallerySection({ project, busy, act }: Props) {
                         <Button disabled={busy} onClick={() => void act(async () => { setImageOffer({ itemId: item.id, quote: await studioApi.galleryImageQuote(project.id, item.id) }); })}>查看单张出图输入</Button>
                         {imageOffer?.itemId === item.id ? <div className="mt-2"><Typography.Paragraph className="whitespace-pre-wrap">提示词：{item.prompt}<br />费用：{imageOffer.quote.estimate == null ? "未知" : imageOffer.quote.estimate}</Typography.Paragraph><Button type="primary" disabled={busy} onClick={() => void act(async () => { await studioApi.galleryImageRun(project.id, item.id, imageOffer.quote.fingerprint, crypto.randomUUID()); setImageOffer(null); })}>确认提交这张套图</Button></div> : null}
                     </div> : null}
-                    {tasks.map((task) => <div key={task.id}><Tag>{task.status}</Tag><Button type="link" disabled={busy} onClick={() => void act(() => studioApi.sync(project.id, task.id))}>同步结果</Button></div>)}
+                    {tasks.map((task) => <div key={task.id}><Tag>{task.status}</Tag><Button type="link" disabled={busy} onClick={() => void act(() => studioApi.sync(project.id, task.id))}>同步结果</Button>{task.error ? <Typography.Text type="danger">{task.error}</Typography.Text> : null}</div>)}
                     {candidates.map((source) => <div key={source.id} className="mt-1">
                         <Tag color={chosen === source.id ? "success" : "default"}>{chosen === source.id ? "当前采用" : "候选"}</Tag>{source.name}
                         <Button type="link" onClick={() => void showImage(source.id)}>查看</Button>

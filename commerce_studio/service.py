@@ -5,9 +5,12 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
+
+from PIL import Image
 
 from app import flova, seeany
 from app.providers import deepseek_complete
@@ -464,10 +467,24 @@ def sync(store, project, task_id):
         if status in ("succeeded", "partial_failed"):
             task.setdefault("imported_urls", [])
             task.setdefault("asset_ids", [])
-            for url in seeany.result_assets(data):
+            urls = seeany.result_assets(data)
+            if not urls and not task["asset_ids"]:
+                task.update(status="待核对", error="SeeAny 未返回可导入图片，请核对远端任务", updated=stamp())
+                store.save(project)
+                raise ValueError(task["error"])
+            for url in urls:
                 if url in task["imported_urls"]:
                     continue
-                raw, suffix = seeany.download_image(url)
+                try:
+                    raw, suffix = seeany.download_image(url)
+                    with Image.open(io.BytesIO(raw)) as image:
+                        if image.format != {".png": "PNG", ".jpg": "JPEG", ".webp": "WEBP"}.get(suffix) or min(image.size) <= 0:
+                            raise ValueError("图片格式与响应类型不符")
+                        image.verify()
+                except Exception as exc:
+                    task.update(status="待核对", error="SeeAny 生成图片下载或校验失败，请重新同步此任务", updated=stamp())
+                    store.save(project)
+                    raise ValueError(task["error"]) from exc
                 source = store.add_source(project, f"seeany-{task['id']}-{len(task['asset_ids']) + 1}{suffix}",
                                           {".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp"}[suffix],
                                           base64.b64encode(raw).decode())
@@ -492,6 +509,7 @@ def sync(store, project, task_id):
                 task["asset_ids"].append(source["id"])
                 task["imported_urls"].append(url)
                 store.save(project)
+            task.pop("error", None)
     elif task["provider"] == "Flova":
         task["result"] = flova.recover(task["external_project_id"])
         task["status"] = "待审核"

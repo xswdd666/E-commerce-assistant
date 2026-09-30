@@ -207,10 +207,22 @@ class CommerceStudioTests(unittest.TestCase):
         upload.assert_called_once()
         submit.assert_called_once()
         response = {"data": {"task": {"status": "succeeded"}, "works": [{"url": "https://cdn.seeany.com/image.png"}]}}
-        with patch.object(service, "provider_key", return_value="test-key"), patch.object(service.seeany, "task_status", return_value=response), patch.object(service.seeany, "download_image", return_value=(b"generated", ".png")) as download:
+        with patch.object(service, "provider_key", return_value="test-key"), patch.object(service.seeany, "task_status", return_value={"data": {"task": {"status": "succeeded"}, "works": []}}):
+            with self.assertRaisesRegex(ValueError, "未返回可导入图片"):
+                service.sync(self.store, self.project, task["id"])
+        self.assertEqual(task["status"], "待核对")
+        with patch.object(service, "provider_key", return_value="test-key"), patch.object(service.seeany, "task_status", return_value=response), patch.object(service.seeany, "download_image", return_value=(b"<html>error</html>", ".png")):
+            with self.assertRaisesRegex(ValueError, "图片下载或校验失败"):
+                service.sync(self.store, self.project, task["id"])
+        self.assertEqual(task["status"], "待核对")
+        self.assertEqual(task.get("asset_ids"), [])
+        picture = io.BytesIO()
+        Image.new("RGB", (32, 32), "white").save(picture, format="PNG")
+        with patch.object(service, "provider_key", return_value="test-key"), patch.object(service.seeany, "task_status", return_value=response), patch.object(service.seeany, "download_image", return_value=(picture.getvalue(), ".png")) as download:
             service.sync(self.store, self.project, task["id"])
             service.sync(self.store, self.project, task["id"])
         download.assert_called_once()
+        self.assertNotIn("error", task)
         candidate = next(s for s in self.project["sources"] if s["id"] == task["asset_ids"][0])
         self.assertEqual(candidate["view_label"], "正面")
         self.assertEqual(candidate["brief_id"], self.project["brief_versions"][-1]["id"])
@@ -1047,7 +1059,9 @@ class CommerceStudioTests(unittest.TestCase):
                 "approved_fingerprint": preview_quote["fingerprint"], "request_id": "prompt-preview-123"})
         self.assertIn("卧室床头", submit.call_args.args[2]["prompt"])
         result = {"data": {"task": {"status": "succeeded"}, "works": [{"url": "https://cdn.seeany.com/preview.png"}]}}
-        with patch.object(service, "provider_key", return_value="test-key"), patch.object(service.seeany, "task_status", return_value=result), patch.object(service.seeany, "download_image", return_value=(b"preview", ".png")):
+        picture = io.BytesIO()
+        Image.new("RGB", (32, 32), "white").save(picture, format="PNG")
+        with patch.object(service, "provider_key", return_value="test-key"), patch.object(service.seeany, "task_status", return_value=result), patch.object(service.seeany, "download_image", return_value=(picture.getvalue(), ".png")):
             service.sync(self.store, self.project, preview_task["id"])
         source_id = preview_task["asset_ids"][0]
         prompts.review_preview(self.store, self.project, versions[0]["id"], source_id, "采用")
