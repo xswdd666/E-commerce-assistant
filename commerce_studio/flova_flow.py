@@ -135,6 +135,43 @@ def attach_project(store, project, project_id):
     return project["external"]
 
 
+def _adopted_scene_images(project, brief_id, master_id):
+    adopted = {}
+    sources = {source["id"]: source for source in project["sources"]}
+
+    def remember(source_id, label, prompt):
+        source = sources.get(source_id)
+        references = source.get("reference_ids") if source else None
+        if source and isinstance(prompt, str) and prompt.strip() and isinstance(references, list) and references and all(isinstance(item, str) for item in references):
+            adopted[source_id] = {"view": label, "prompt": prompt.strip(), "reference_ids": references}
+
+    plan = next((item for item in project["gallery_versions"] if item["id"] == project["gallery_approval"]
+                 and item["brief_id"] == brief_id and item["master_id"] == master_id), None)
+    if plan:
+        for item in plan["items"]:
+            source_id = project["gallery_choices"].get(item["id"])
+            source = sources.get(source_id)
+            if source and source.get("gallery_plan_id") == plan["id"] and source.get("gallery_item_id") == item["id"] and any(
+                    review.get("item_id") == item["id"] and review.get("source_id") == source_id and review.get("decision") == "采用" for review in project["gallery_reviews"]):
+                remember(source_id, f"套图场景：{item['kind']}", item.get("prompt"))
+    choice = project.get("prompt_adoption")
+    if choice:
+        version = next((item for item in project["prompt_versions"] if item["id"] == choice["version_id"]), None)
+        if version and sources.get(choice["source_id"], {}).get("prompt_version_id") == version["id"] and version["brief_id"] == brief_id and version["master_id"] == master_id and any(
+                review.get("id") == choice.get("review_id") and review.get("source_id") == choice["source_id"] and review.get("decision") == "采用"
+                for review in project["prompt_reviews"]):
+            remember(choice["source_id"], "已采用提示词试图", sources.get(choice["source_id"], {}).get("import_prompt") or version.get("text"))
+    for node_id, source_id in project.get("canvas_preview_adoption", {}).items():
+        task = next((item for item in project["tasks"] if item.get("kind") == "preview" and item.get("node_id") == node_id
+                     and item.get("status") == "完成" and source_id in item.get("asset_ids", [])
+                     and item.get("input_snapshot", {}).get("brief_id") == brief_id
+                     and item.get("input_snapshot", {}).get("master_id") == master_id), None)
+        if task and sources.get(source_id, {}).get("canvas_node_id") == node_id and any(
+                review.get("task_id") == task["id"] and review.get("source_id") == source_id and review.get("decision") == "采用" for review in project["canvas_preview_reviews"]):
+            remember(source_id, "已采用画布试图", task["input_snapshot"].get("prompt"))
+    return adopted
+
+
 def _canvas_input(project, body):
     if body is None:
         return None
@@ -147,10 +184,12 @@ def _canvas_input(project, body):
     if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 12000:
         raise ValueError("画布视频提示词无效")
     references = body.get("reference_images")
-    if not isinstance(references, list) or not 1 <= len(references) <= 3:
-        raise ValueError("画布视频需要一至三张已确认母版参考图")
+    if not isinstance(references, list) or not 1 <= len(references) <= 9:
+        raise ValueError("画布视频需要一至九张已审核参考图")
     master = project["master_versions"][-1]
-    sources = {source["id"]: source for source in project["sources"] if source["id"] in master["asset_ids"]}
+    master_ids = set(master["asset_ids"])
+    scenes = _adopted_scene_images(project, project["brief_versions"][-1]["id"], master["id"])
+    sources = {source["id"]: source for source in project["sources"] if source["id"] in master_ids or source["id"] in scenes}
     selected = []
     for reference in references:
         if not isinstance(reference, dict) or not isinstance(reference.get("node_id"), str) or not reference["node_id"]:
@@ -158,10 +197,13 @@ def _canvas_input(project, body):
         digest = reference.get("sha256")
         if not isinstance(digest, str) or len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
             raise ValueError("画布参考图摘要无效")
-        source = next((item for item in sources.values() if item["sha256"] == digest), None)
+        source = next((item for item in sources.values() if item["sha256"] == digest and item["mime"] in ("image/png", "image/jpeg", "image/webp")), None)
         if not source:
-            raise ValueError("画布视频参考图须是当前已确认母版的原图")
-        selected.append({"node_id": reference["node_id"], "source_id": source["id"], "sha256": digest, "view": source["view_label"]})
+            raise ValueError("画布视频参考图须是当前母版或已采用场景图的原图")
+        selected.append({"node_id": reference["node_id"], "source_id": source["id"], "sha256": digest,
+                         "view": source.get("view_label") if source["id"] in master_ids else scenes[source["id"]]["view"],
+                         "kind": "master" if source["id"] in master_ids else "scene",
+                         **({"prompt": scenes[source["id"]]["prompt"], "reference_ids": scenes[source["id"]]["reference_ids"]} if source["id"] in scenes and source["id"] not in master_ids else {})})
     if len({item["node_id"] for item in selected}) != len(selected):
         raise ValueError("画布参考图节点重复")
     media = body.get("reference_media", [])
@@ -199,10 +241,22 @@ def quote(project, canvas_context=None):
         raise ValueError("分镜含未核实的推断细节，请重新审核")
     sources = {s["id"]: s for s in project["sources"]}
     canvas_input = _canvas_input(project, canvas_context)
-    selected_ids = {item["source_id"] for item in canvas_input["reference_images"]} if canvas_input else set(master["asset_ids"])
+    selected_ids = {item["source_id"] for item in canvas_input["reference_images"] if item["kind"] == "master"} if canvas_input else set(master["asset_ids"])
     if canvas_input and not {shot["reference_asset_id"] for shot in storyboard["shots"]}.issubset(selected_ids):
         raise ValueError("画布连线参考图缺少已批准分镜使用的母版视角")
-    assets = [{"id": asset_id, "sha256": sources[asset_id]["sha256"], "view": sources[asset_id]["view_label"]} for asset_id in master["asset_ids"] if asset_id in selected_ids]
+    assets = ([{"id": item["source_id"], "sha256": item["sha256"], "view": item["view"], "kind": item["kind"], "node_id": item["node_id"]} for item in canvas_input["reference_images"]]
+              if canvas_input else [{"id": asset_id, "sha256": sources[asset_id]["sha256"], "view": sources[asset_id]["view_label"], "kind": "master"} for asset_id in master["asset_ids"]])
+    if canvas_input:
+        master_hashes = {sources[asset_id]["sha256"] for asset_id in master["asset_ids"]}
+        uploaded_hashes = {asset["sha256"] for asset in assets}
+        for image in canvas_input["reference_images"]:
+            for reference_id in image.get("reference_ids", []):
+                source = sources.get(reference_id)
+                if not source or source["sha256"] not in master_hashes or source["mime"] not in ("image/png", "image/jpeg", "image/webp"):
+                    raise ValueError("已采用场景图的原始参考不属于当前母版，请重新审核")
+                if source["sha256"] not in uploaded_hashes:
+                    assets.append({"id": source["id"], "sha256": source["sha256"], "view": source.get("view_label") or source["name"], "kind": "evidence"})
+                    uploaded_hashes.add(source["sha256"])
     snapshot = {"flova_project_id": project_id, "brief_id": brief["id"], "master_id": master["id"],
                 "script_id": script["id"], "storyboard_id": storyboard_id, "assets": assets,
                 "shot_count": len(storyboard["shots"]), "duration": sum(s["duration"] for s in storyboard["shots"])}
@@ -270,16 +324,19 @@ def _run_worker(store, project_id, task_id):
                                 + "\n".join(f"镜头 {(snapshot['shot_index'] if task['kind'] == 'video_shot' else i)+1}（{shot['duration']} 秒）：{shot['visual']}；字幕：{shot['caption']}；已核实细节：{', '.join(next(d['text'] for d in master.get('inferred_details', []) if isinstance(d, dict) and d['id'] == detail_id) for detail_id in shot.get('detail_ids', [])) or '无'}" for i, shot in enumerate(shots))
                                 + "\n\n母版仍待核实的结构不得用于特写、规格或卖点宣称。"
                                 + ("\n\n画布视频配置节点输入：\n" + snapshot["canvas_input"]["prompt"]
-                                   + "\n画布连线选定的母版视角：" + "、".join(item["view"] for item in snapshot["canvas_input"]["reference_images"])
+                                   + "\n画布连线选定的参考图：" + "、".join(item["view"] for item in snapshot["canvas_input"]["reference_images"])
+                                   + "\n已采用场景图与生成依据：\n" + "\n".join(
+                                       f"{item['view']}；实际提示词：{item['prompt']}；原始参考：{', '.join(next(s['name'] for s in project['sources'] if s['id'] == source_id) for source_id in item['reference_ids'])}"
+                                       for item in snapshot["canvas_input"]["reference_images"] if item["kind"] == "scene")
                                    + "\n画布连线音视频参考：" + "、".join(item["kind"] + " " + item["node_id"] for item in snapshot["canvas_input"]["reference_media"])
                                    if snapshot.get("canvas_input") else ""), encoding="utf-8")
             files = [material]
-            for asset in snapshot["assets"]:
+            for index, asset in enumerate(snapshot["assets"]):
                 source, raw = store.source_bytes(project, asset["id"])
                 suffix = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}.get(source["mime"])
                 if not suffix:
                     raise ValueError("Flova 母版图片格式不支持")
-                path = directory / f"master-{asset['view']}{suffix}"
+                path = directory / f"{asset.get('kind', 'master')}-{index}{suffix}"
                 path.write_bytes(raw)
                 files.append(path)
             for index, media in enumerate(snapshot.get("canvas_input", {}).get("reference_media", [])):
@@ -307,8 +364,8 @@ def _run_worker(store, project_id, task_id):
                           "只使用本次上传的已确认事实与母版参考，不生成或改动其他镜头，不导出成片。"
                           "静音时也要能理解；未核实结构不能作为特写或卖点。完成后呈现该镜头供人工审核。")
             else:
-                prompt = ("请依据已上传的产品事实、批准脚本、完整分镜与三视图母版，在当前 Flova 项目制作约 15 秒 9:16 竖屏商品详情页视频。"
-                          "上传的 approved-plan.txt 是正式脚本与分镜，master 图片是同一真实商品的已确认参考。"
+                prompt = ("请依据已上传的产品事实、批准脚本、完整分镜与已审核参考图，在当前 Flova 项目制作约 15 秒 9:16 竖屏商品详情页视频。"
+                          "上传的 approved-plan.txt 是正式脚本、分镜与采用图的实际提示词及来源，master 图片是同一真实商品的已确认母版，scene 图片是人工采用的场景参考，evidence 图片是场景图的原始参考。"
                           "每个镜头遵守分镜目标时长；静音时也要能理解；不要把未获核实的结构当作卖点。"
                           "本轮先制作并呈现镜头与时间线，最终导出等待人工审核。")
                 if snapshot.get("canvas_input"):

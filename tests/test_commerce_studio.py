@@ -372,7 +372,7 @@ class CommerceStudioTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "重新查看快照"):
             flova_flow.run(self.store, self.project, {"request_id": "canvas-run-123", "approved_fingerprint": offer["fingerprint"],
                                                       "canvas_context": {**canvas, "prompt": "变更后的提示词"}})
-        with self.assertRaisesRegex(ValueError, "当前已确认母版"):
+        with self.assertRaisesRegex(ValueError, "当前母版或已采用场景图"):
             flova_flow.quote(self.project, {**canvas, "reference_images": [{"node_id": "image-1", "sha256": hashlib.sha256(b"different").hexdigest()}]})
         other_source = next(item for item in self.project["sources"] if item["id"] == master["asset_ids"][1])
         with self.assertRaisesRegex(ValueError, "缺少已批准分镜"):
@@ -384,7 +384,19 @@ class CommerceStudioTests(unittest.TestCase):
                                      {"node_id": "audio-1", "source_id": audio["id"], "sha256": audio["sha256"], "kind": "audio"}]
         with self.assertRaisesRegex(ValueError, "已变化"):
             flova_flow.quote(self.project, {**canvas, "reference_media": [{**canvas["reference_media"][0], "sha256": "0" * 64}]})
+        scene = self.store.add_source(self.project, "adopted-scene.png", "image/png", base64.b64encode(b"scene-image").decode())
+        scene["reference_ids"] = [master["asset_ids"][1]]
+        scene["prompt_version_id"] = "scene-prompt"
+        self.project["prompt_versions"].append({"id": "scene-prompt", "brief_id": self.project["brief_versions"][-1]["id"], "master_id": master["id"], "text": "晨光场景实际生成提示词"})
+        self.project["prompt_reviews"].append({"id": "scene-review", "source_id": scene["id"], "decision": "采用"})
+        scene_reference = {"node_id": "scene-image-1", "sha256": scene["sha256"]}
+        with self.assertRaisesRegex(ValueError, "已采用场景图"):
+            flova_flow.quote(self.project, {**canvas, "reference_images": [*canvas["reference_images"], scene_reference]})
+        self.project["prompt_adoption"] = {"version_id": "scene-prompt", "source_id": scene["id"], "review_id": "scene-review"}
+        canvas["reference_images"].append(scene_reference)
+        self.store.save(self.project)
         offer = flova_flow.quote(self.project, canvas)
+        self.assertEqual([asset["kind"] for asset in offer["input_snapshot"]["assets"]], ["master", "scene", "evidence"])
         with patch.object(flova_flow.threading, "Thread"):
             task = flova_flow.run(self.store, self.project, {"request_id": "canvas-run-123", "approved_fingerprint": offer["fingerprint"], "canvas_context": canvas})
         self.assertEqual(task["node_id"], "video-config-1")
@@ -398,9 +410,12 @@ class CommerceStudioTests(unittest.TestCase):
             flova_flow._run_worker(self.store, self.project["id"], task["id"])
         self.assertIn("晨光厨房，展示白色产品", uploaded_plan[0])
         self.assertIn("画布视频配置节点输入", uploaded_plan[0])
+        self.assertIn("晨光场景实际生成提示词", uploaded_plan[0])
         self.assertIn("canvas-video-0.mp4", uploads)
         self.assertIn("canvas-audio-1.mp3", uploads)
-        self.assertEqual(len(uploads), 4)
+        self.assertIn("scene-1.png", uploads)
+        self.assertIn("evidence-2.png", uploads)
+        self.assertEqual(len(uploads), 6)
         self.assertIn("画布", remote.call_args.args[3])
 
     def test_canvas_media_over_document_limit_survives_project_backup(self):
