@@ -702,6 +702,34 @@ class CommerceStudioTests(unittest.TestCase):
         self.assertEqual(self.store.source_bytes(restored, source_id)[1], self.store.source_bytes(self.project, source_id)[1])
         self.assertEqual(len(restored["costs"]), len(self.project["costs"]))
 
+    def test_canvas_preview_review_records_adoption_and_finishes_task(self):
+        self.approved_project()
+        source = self.store.add_source(self.project, "preview.png", "image/png", base64.b64encode(b"preview bytes").decode())
+        task = {"id": "canvas-preview", "kind": "preview", "node_id": "config-1", "provider": "SeeAny",
+                "status": "待审核", "asset_ids": [source["id"]], "input_snapshot": {
+                    "brief_id": self.project["brief_versions"][-1]["id"], "master_id": self.project["master_versions"][-1]["id"]}}
+        self.project["tasks"].append(task)
+        review = service.review_canvas_preview(self.store, self.project, task["id"], source["id"], "采用")
+        self.assertEqual(review["decision"], "采用")
+        self.assertEqual(task["status"], "完成")
+        self.assertEqual(self.project["canvas_preview_adoption"]["config-1"], source["id"])
+        with patch.object(service.seeany, "task_status", side_effect=AssertionError("completed task polled again")):
+            self.assertIs(service.sync(self.store, self.project, task["id"]), task)
+        with self.assertRaisesRegex(ValueError, "尚未完成"):
+            service.review_canvas_preview(self.store, self.project, task["id"], source["id"], "采用")
+        rejected = {**task, "id": "rejected-preview", "status": "待审核"}
+        self.project["tasks"].append(rejected)
+        with self.assertRaisesRegex(ValueError, "废图原因"):
+            service.review_canvas_preview(self.store, self.project, rejected["id"], source["id"], "废图")
+        service.review_canvas_preview(self.store, self.project, rejected["id"], source["id"], "废图", "结构变形")
+        self.assertEqual(rejected["status"], "完成")
+        self.assertNotIn("config-1", self.project["canvas_preview_adoption"])
+        stale = {**task, "id": "stale-preview", "status": "待审核"}
+        self.project["tasks"].append(stale)
+        self.project["master_versions"].append({**self.project["master_versions"][-1], "id": "new-master"})
+        with self.assertRaisesRegex(ValueError, "上游版本已变化"):
+            service.review_canvas_preview(self.store, self.project, stale["id"], source["id"], "采用")
+
     def test_public_backup_routes_round_trip_without_exposing_keys(self):
         source = self.store.add_source(self.project, "source.txt", "text/plain", base64.b64encode(b"merchant facts").decode())
         server = ThreadingHTTPServer(("127.0.0.1", 0), bridge.Handler)

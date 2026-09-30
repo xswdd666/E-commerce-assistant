@@ -17,9 +17,10 @@ import { CommerceObservationSection } from "@/components/canvas/commerce-observa
 import { createCanvasExportBlob } from "@/lib/canvas/canvas-export";
 import { createZip } from "@/lib/zip";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { commerceNodeStatus } from "@/lib/canvas/commerce-node-status";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
-type Props = { open: boolean; onClose: () => void; canvasId: string; title: string; nodes: CanvasNodeData[]; connections: CanvasConnection[]; selectedNodeId?: string; onProjectChange: (project: StudioProject) => void; onInsertImage: (dataUrl: string, title: string, commerceImage?: { projectId: string; sourceId: string; masterVersionId: string }, commercePromptImage?: { projectId: string; sourceId: string; versionId: string }) => Promise<void>; onInsertText: (text: string, title: string, source?: { projectId: string; kind: "script" | "storyboard" | "prompt"; versionId: string; parentVersionId?: string | null }) => void; onInsertVideo: (blob: Blob, title: string, projectId: string, deliverableId: string) => Promise<void> };
+type Props = { open: boolean; onClose: () => void; canvasId: string; title: string; nodes: CanvasNodeData[]; connections: CanvasConnection[]; selectedNodeId?: string; onProjectChange: (project: StudioProject) => void; onInsertImage: (dataUrl: string, title: string, commerceImage?: { projectId: string; sourceId: string; masterVersionId: string }, commercePromptImage?: { projectId: string; sourceId: string; versionId: string }, commercePreview?: { projectId: string; taskId: string; sourceId: string; configNodeId: string }) => Promise<void>; onInsertText: (text: string, title: string, source?: { projectId: string; kind: "script" | "storyboard" | "prompt"; versionId: string; parentVersionId?: string | null }) => void; onInsertVideo: (blob: Blob, title: string, projectId: string, deliverableId: string) => Promise<void> };
 
 export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, connections, selectedNodeId, onProjectChange, onInsertImage, onInsertText, onInsertVideo }: Props) {
     const [project, setProject] = useState<StudioProject | null>(null);
@@ -47,6 +48,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
     const [previewRequest, setPreviewRequest] = useState<PreviewRequest | null>(null);
     const [previewRatio, setPreviewRatio] = useState("1:1");
     const [comparison, setComparison] = useState<{ original: string; generated: string } | null>(null);
+    const [previewComparison, setPreviewComparison] = useState<{ taskId: string; original: string; generated: string } | null>(null);
     const [factsOffer, setFactsOffer] = useState<{ sourceId: string; quote: StudioQuote } | null>(null);
     const [previewSourceId, setPreviewSourceId] = useState<string | null>(null);
     const [resolvingTaskId, setResolvingTaskId] = useState<string | null>(null);
@@ -89,6 +91,7 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
     const selectedAsset = selected?.metadata?.commerceAsset;
     const selectedImage = selected?.metadata?.commerceImage;
     const selectedPromptImage = selected?.metadata?.commercePromptImage;
+    const selectedPreview = selected?.metadata?.commercePreview;
     const selectedImageSource = project?.sources.find((item) => item.id === selectedImage?.sourceId);
     const selectedSourceCurrent = Boolean(project && selectedSource && selectedSource.projectId === project.id && selectedSource.originalText === selected?.metadata?.content &&
         (selectedSource.kind === "script" ? selectedSource.versionId === project.script_approval : selectedSource.kind === "storyboard" ? selectedSource.versionId === project.storyboard_approval :
@@ -235,7 +238,9 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                             {selectedAsset ? <Typography.Paragraph>视频来源：{project.deliverables.find((item) => item.id === selectedAsset.deliverableId && selectedAsset.projectId === project.id)?.name || "来源项目或交付物已变化，请重新核对"}</Typography.Paragraph> : null}
                             {selectedImage ? <Typography.Paragraph>母版来源：{selectedImageSource?.name || selectedImage.sourceId}；原始参考：{selectedImageSource?.reference_ids?.map((id) => project.sources.find((item) => item.id === id)?.name || id).join("、") || "未记录"} · {selectedImage.projectId === project.id && selectedImage.masterVersionId === currentMaster?.id && currentMaster?.asset_ids.includes(selectedImage.sourceId) && selectedImage.originalStorageKey === selected?.metadata?.storageKey ? "仍引用当前母版的加入时副本" : "图片内容或母版版本已变化，请重新核对"}</Typography.Paragraph> : null}
                             {selectedPromptImage ? <Typography.Paragraph>试图来源：{project.sources.find((item) => item.id === selectedPromptImage.sourceId)?.name || selectedPromptImage.sourceId} · 提示词版本 {selectedPromptImage.versionId.slice(0, 12)} · {selectedPromptImage.originalStorageKey !== selected?.metadata?.storageKey ? "节点图片已替换，请重新核对" : selectedPromptImage.projectId === project.id && project.prompt_adoption?.source_id === selectedPromptImage.sourceId ? "当前采用" : "未采用分支"}</Typography.Paragraph> : null}
+                            {selectedPreview ? <Typography.Paragraph>画布试图来源：任务 {selectedPreview.taskId.slice(0, 12)} · {selectedPreview.originalStorageKey !== selected?.metadata?.storageKey ? "节点图片已替换，请重新核对" : selectedPreview.projectId === project.id && project.canvas_preview_adoption[selectedPreview.configNodeId] === selectedPreview.sourceId ? "当前采用" : "未采用"}</Typography.Paragraph> : null}
                             {inputs.length ? inputs.map((node) => <Tag key={node.id}>{node.type} · {node.title || node.id}</Tag>) : <Typography.Text type="secondary">等待连接</Typography.Text>}
+                            {selected?.type === CanvasNodeType.Config ? <Typography.Paragraph className="mt-2">画布任务状态：{commerceNodeStatus(selected.id, inputs.length > 0, project.tasks)}</Typography.Paragraph> : null}
                             {selected ? <Typography.Paragraph className="mt-2">节点费用：{selectedCosts.length} 笔任务；已确认实付 {selectedSpend.size ? [...selectedSpend].map(([unit, amount]) => `${amount.toFixed(2)} ${unit}`).join("、") : "暂无"}；待结算 {selectedCosts.filter((cost) => cost.actual == null).length} 笔；预估未知 {selectedCosts.filter((cost) => cost.estimate == null).length} 笔。</Typography.Paragraph> : null}
                             <Typography.Paragraph type="secondary" className="mt-2">连线仅编辑画布。任务提交前需查看实际输入和费用；未知费用不会自动提交。</Typography.Paragraph>
                             {selected?.type === CanvasNodeType.Config ? <Space direction="vertical" className="mt-2 w-full">
@@ -254,7 +259,18 @@ export function CommerceStudioPanel({ open, onClose, canvasId, title, nodes, con
                         </section>
                         <section>
                             <Typography.Title level={5}>试图任务</Typography.Title>
-                            {project.tasks.filter((task) => task.kind === "preview").map((task) => <div key={task.id} className="mt-2"><Tag>{task.status}</Tag>画布试图 <Button type="link" disabled={busy || !task.remote_id} onClick={() => void act(() => studioApi.sync(project.id, task.id))}>同步状态</Button>{task.asset_ids?.length && task.source_id ? <Button type="link" onClick={() => void (async () => { try { const [original, generated] = await Promise.all([studioApi.sourceData(project.id, task.source_id!), studioApi.sourceData(project.id, task.asset_ids![0])]); setComparison({ original: original.data_url, generated: generated.data_url }); } catch (cause) { setError(cause instanceof Error ? cause.message : "读取图片失败"); } })()}>对照查看</Button> : null}</div>)}
+                            {project.tasks.filter((task) => task.kind === "preview").map((task) => {
+                                const sourceId = task.asset_ids?.[0];
+                                const nodeId = task.node_id || task.input_snapshot?.config_node_id;
+                                const adopted = Boolean(sourceId && nodeId && project.canvas_preview_adoption[nodeId] === sourceId);
+                                return <div key={task.id} className="mt-2"><Tag>{task.status}</Tag>画布试图 · {nodeNames[nodeId || ""] || nodeId || task.id.slice(0, 12)}
+                                    <Button type="link" disabled={busy || !task.remote_id || task.status === "完成"} onClick={() => void act(() => studioApi.sync(project.id, task.id))}>同步状态</Button>
+                                    {sourceId && task.source_id ? <Button type="link" onClick={() => void (async () => { try { const [original, generated] = await Promise.all([studioApi.sourceData(project.id, task.source_id!), studioApi.sourceData(project.id, sourceId)]); setPreviewComparison({ taskId: task.id, original: original.data_url, generated: generated.data_url }); } catch (cause) { setError(cause instanceof Error ? cause.message : "读取图片失败"); } })()}>对照查看</Button> : null}
+                                    {sourceId && task.status === "待审核" ? <><Button type="link" disabled={busy || previewComparison?.taskId !== task.id} onClick={() => void act(() => studioApi.previewReview(project.id, task.id, sourceId, "采用"))}>核对后采用</Button><Button type="link" disabled={busy || previewComparison?.taskId !== task.id} onClick={() => { const reason = window.prompt("废图原因"); if (reason?.trim()) void act(() => studioApi.previewReview(project.id, task.id, sourceId, "废图", reason)); }}>废图</Button></> : null}
+                                    {sourceId && nodeId && adopted ? <Button type="link" disabled={busy || nodes.some((node) => node.metadata?.commercePreview?.taskId === task.id && node.metadata.commercePreview.sourceId === sourceId)} onClick={() => void act(async () => { const asset = await studioApi.sourceData(project.id, sourceId); await onInsertImage(asset.data_url, "已采用画布试图", undefined, undefined, { projectId: project.id, taskId: task.id, sourceId, configNodeId: nodeId }); })}>加入画布图片节点</Button> : null}
+                                </div>;
+                            })}
+                            {previewComparison ? <div className="mt-2 grid grid-cols-2 gap-2"><div><Typography.Text>母版参考</Typography.Text><img src={previewComparison.original} alt="母版参考" className="w-full" /></div><div><Typography.Text>试图候选</Typography.Text><img src={previewComparison.generated} alt="试图候选" className="w-full" /></div></div> : null}
                         </section>
                         {project.tasks.some((task) => task.status === "待核对" && !task.remote_id) ? <section>
                             <Typography.Title level={5}>中断任务核对</Typography.Title>

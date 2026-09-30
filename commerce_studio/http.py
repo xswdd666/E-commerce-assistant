@@ -148,6 +148,8 @@ class Handler(BaseHTTPRequestHandler):
                     return service.preview_quote(project, body)
                 if parts[3:] == ["preview", "run"]:
                     return service.run_preview(STORE, project, body)
+                if parts[3:] == ["preview", "review"]:
+                    return service.review_canvas_preview(STORE, project, body.get("task_id"), body.get("source_id"), body.get("decision"), body.get("reason", ""))
                 if parts[3:] == ["directions", "quote"]:
                     return service.directions_quote(project)
                 if parts[3:] == ["directions", "run"]:

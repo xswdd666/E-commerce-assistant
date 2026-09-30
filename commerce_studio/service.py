@@ -324,6 +324,29 @@ def run_preview(store, project, body):
     return task
 
 
+def review_canvas_preview(store, project, task_id, source_id, decision, reason=""):
+    if decision not in ("采用", "废图"):
+        raise ValueError("请选择采用或废图")
+    task = next((item for item in project["tasks"] if item["id"] == task_id and item.get("kind") == "preview"), None)
+    if not task or task["status"] != "待审核" or source_id not in task.get("asset_ids", []):
+        raise ValueError("试图任务尚未完成或候选图无效")
+    snapshot = task["input_snapshot"]
+    if snapshot["brief_id"] != project["brief_versions"][-1]["id"] or snapshot["master_id"] != project["master_versions"][-1]["id"]:
+        raise ValueError("上游版本已变化，请重新试图")
+    if decision == "废图" and not str(reason).strip():
+        raise ValueError("请记录废图原因")
+    review = {"id": ident(), "task_id": task_id, "source_id": source_id, "node_id": task["node_id"],
+              "decision": decision, "reason": str(reason).strip()[:500], "reviewer": "local", "at": stamp()}
+    project["canvas_preview_reviews"].append(review)
+    if decision == "采用":
+        project["canvas_preview_adoption"][task["node_id"]] = source_id
+    elif project["canvas_preview_adoption"].get(task["node_id"]) == source_id:
+        project["canvas_preview_adoption"].pop(task["node_id"])
+    task.update(status="完成", review_id=review["id"], updated=stamp())
+    store.save(project)
+    return review
+
+
 def run_master(store, project, body):
     existing = next((t for t in project["tasks"] if t["idempotency_key"] == body.get("request_id")), None)
     if existing:
@@ -422,6 +445,8 @@ def sync(store, project, task_id):
     task = next((t for t in project["tasks"] if t["id"] == task_id), None)
     if not task:
         raise ValueError("任务不存在")
+    if task["status"] == "完成":
+        return task
     if task["provider"] == "SeeAny":
         if not task["remote_id"]:
             raise ValueError("缺少远端任务标识，需人工核对")

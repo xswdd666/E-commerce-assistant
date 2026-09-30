@@ -86,6 +86,7 @@ export default function CanvasPage() {
                     if (node.metadata?.commerceSource?.projectId === restored.restored_from) node.metadata.commerceSource.projectId = restored.id;
                     if (node.metadata?.commerceImage?.projectId === restored.restored_from) node.metadata.commerceImage.projectId = restored.id;
                     if (node.metadata?.commercePromptImage?.projectId === restored.restored_from) node.metadata.commercePromptImage.projectId = restored.id;
+                    if (node.metadata?.commercePreview?.projectId === restored.restored_from) node.metadata.commercePreview.projectId = restored.id;
                 }
                 const newCanvasId = importProject(remapped);
                 await localforage.setItem(`commerce-studio:${newCanvasId}`, restored.id);

@@ -34,6 +34,8 @@ export type StudioProject = {
     prompt_versions: PromptVersion[];
     prompt_adoption: { version_id: string; source_id: string; review_id: string } | null;
     prompt_reviews: Array<{ id: string; version_id: string; source_id: string; decision: string; reason: string }>;
+    canvas_preview_reviews: Array<{ id: string; task_id: string; source_id: string; node_id: string; decision: string; reason: string }>;
+    canvas_preview_adoption: Record<string, string>;
     video_approval: { task_id: string; stream_chat_id: string; approved_at: string } | null;
     shot_approvals: Record<string, { task_id: string; stream_chat_id: string; storyboard_id: string; approved_at: string }>;
     deliverables: Array<{ id: string; kind: string; task_id?: string; edit_id?: string; resource_id?: string; name: string; bytes: number; sha256: string }>;
@@ -41,7 +43,7 @@ export type StudioProject = {
     costs: StudioCost[];
     cost_target: { amount: number; currency: string } | null;
     external: { flova_project_id: string; flova_project_url: string };
-    tasks: Array<{ id: string; provider: string; kind?: string; status: string; remote_id?: string | null; estimate: number | null; actual: number | null; candidate_group?: number; view_label?: string; asset_ids?: string[]; source_id?: string; input_snapshot?: { item?: { id: string }; version_id?: string; shot_id?: string; storyboard_id?: string }; error?: string; interrupted_at?: string; manual_resolution?: { outcome: string; note: string; at: string }; pending_actions?: Array<{ type?: string; message?: string; blocking?: boolean }> }>;
+    tasks: Array<{ id: string; provider: string; kind?: string; node_id?: string; status: string; remote_id?: string | null; estimate: number | null; actual: number | null; candidate_group?: number; view_label?: string; asset_ids?: string[]; source_id?: string; input_snapshot?: { item?: { id: string }; version_id?: string; shot_id?: string; storyboard_id?: string; config_node_id?: string }; error?: string; interrupted_at?: string; manual_resolution?: { outcome: string; note: string; at: string }; pending_actions?: Array<{ type?: string; message?: string; blocking?: boolean }> }>;
     chat: Array<{ id: string; prompt: string; reply: string; brief_id?: string; created: string }>;
 };
 
@@ -92,6 +94,7 @@ export const studioApi = {
     chatRun: (id: string, prompt: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/chat/run`, { prompt, approved_fingerprint, request_id }),
     previewQuote: (id: string, body: PreviewRequest) => request<StudioQuote>(`/projects/${id}/preview/quote`, body),
     previewRun: (id: string, body: PreviewRequest & { approved_fingerprint: string; request_id: string }) => request(`/projects/${id}/preview/run`, body),
+    previewReview: (id: string, task_id: string, source_id: string, decision: "采用" | "废图", reason = "") => request(`/projects/${id}/preview/review`, { task_id, source_id, decision, reason }),
     sourceData: (id: string, sourceId: string) => request<{ name: string; mime: string; data_url: string }>(`/projects/${id}/sources/${sourceId}`),
     directionsQuote: (id: string) => request<StudioQuote>(`/projects/${id}/directions/quote`, {}),
     directionsRun: (id: string, approved_fingerprint: string, request_id: string) => request(`/projects/${id}/directions/run`, { approved_fingerprint, request_id }),

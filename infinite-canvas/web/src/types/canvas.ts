@@ -87,6 +87,7 @@ export type CanvasNodeMetadata = {
     commerceSource?: { projectId: string; kind: "script" | "storyboard" | "prompt"; versionId: string; originalText: string; parentVersionId?: string | null };
     commerceImage?: { projectId: string; sourceId: string; masterVersionId: string; originalStorageKey?: string };
     commercePromptImage?: { projectId: string; sourceId: string; versionId: string; originalStorageKey?: string };
+    commercePreview?: { projectId: string; taskId: string; sourceId: string; configNodeId: string; originalStorageKey?: string };
     groupId?: string;
     interactive?: boolean; // Plugin node interaction/move state; see CanvasNodeDefinition.interactionToggle.
 };
@@ -123,6 +124,7 @@ export type CanvasAssistantImage = {
     prompt: string;
     commerceImage?: { projectId: string; sourceId: string; masterVersionId: string };
     commercePromptImage?: { projectId: string; sourceId: string; versionId: string };
+    commercePreview?: { projectId: string; taskId: string; sourceId: string; configNodeId: string };
 };
 
 export type CanvasAssistantMessage = {

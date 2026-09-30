@@ -21,7 +21,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { captureVideoFrame, type VideoFramePosition } from "@/lib/canvas/canvas-video-frame";
-import { App, Button, Modal } from "antd";
+import { App, Button, Modal, theme as antdTheme } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "@/constant/canvas";
 import { ActiveConnectionPath, ConnectionPath } from "@/components/canvas/canvas-connections";
 import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer";
@@ -78,6 +78,7 @@ import { CanvasTopBar } from "@/components/canvas/canvas-top-bar";
 import { CommerceStudioPanel } from "@/components/canvas/commerce-studio-panel";
 import { studioApi, type StudioProject } from "@/services/api/commerce-studio";
 import { hiddenCommerceBranchNodeIds, type CommerceBranchState } from "@/lib/canvas/commerce-branches";
+import { commerceNodeStatus, type CommerceNodeStatus } from "@/lib/canvas/commerce-node-status";
 import { ConnectionCreateMenu, NodeCreateMenu, type PendingConnectionCreate } from "@/components/canvas/canvas-create-menus";
 import {
     CanvasNodeType,
@@ -223,6 +224,7 @@ function InfiniteCanvasPage() {
     const deleteProjects = useCanvasStore((state) => state.deleteProjects);
     const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const { token: statusColors } = antdTheme.useToken();
     const [nodes, setNodes] = useState<CanvasNodeData[]>([]);
     const [connections, setConnections] = useState<CanvasConnection[]>([]);
     const [chatSessions, setChatSessions] = useState<CanvasAssistantSession[]>([]);
@@ -248,6 +250,7 @@ function InfiniteCanvasPage() {
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [commerceOpen, setCommerceOpen] = useState(false);
     const [commerceBranch, setCommerceBranch] = useState<CommerceBranchState | null>(null);
+    const [commerceTasks, setCommerceTasks] = useState<StudioProject["tasks"] | null>(null);
     const [showCommerceBranches, setShowCommerceBranches] = useState(false);
     const [projectLoaded, setProjectLoaded] = useState(false);
     const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
@@ -288,14 +291,18 @@ function InfiniteCanvasPage() {
     useEffect(() => {
         let active = true;
         setCommerceBranch(null);
+        setCommerceTasks(null);
         setShowCommerceBranches(false);
         void (async () => {
             try {
                 const id = await localforage.getItem<string>(`commerce-studio:${projectId}`);
                 const project = id ? await studioApi.get(id) : null;
-                if (active) setCommerceBranch(commerceBranchFromProject(project));
+                if (active) {
+                    setCommerceBranch(commerceBranchFromProject(project));
+                    setCommerceTasks(project?.tasks || null);
+                }
             } catch {
-                if (active) setCommerceBranch(null);
+                if (active) { setCommerceBranch(null); setCommerceTasks(null); }
             }
         })();
         return () => { active = false; };
@@ -303,7 +310,17 @@ function InfiniteCanvasPage() {
 
     const handleCommerceProjectChange = useCallback((project: StudioProject) => {
         setCommerceBranch(commerceBranchFromProject(project));
+        setCommerceTasks(project.tasks);
     }, []);
+
+    const statusColor: Record<CommerceNodeStatus, string> = {
+        "等待连接": theme.node.faint,
+        "等待": theme.node.muted,
+        "运行中": statusColors.colorInfo,
+        "完成": statusColors.colorSuccess,
+        "需审核": statusColors.colorWarning,
+        "失败": statusColors.colorError,
+    };
 
     useEffect(() => { setShowCommerceBranches(false); }, [commerceBranch?.adoption?.source_id]);
 
@@ -3001,7 +3018,7 @@ function InfiniteCanvasPage() {
                 position: { x: center.x - config.width / 2, y: center.y - config.height / 2 },
                 width: config.width,
                 height: config.height,
-                metadata: { ...imageMetadata({ ...storedImage, width: meta.width, height: meta.height }), prompt: image.prompt, commerceImage: image.commerceImage ? { ...image.commerceImage, originalStorageKey: storedImage.storageKey } : undefined, commercePromptImage: image.commercePromptImage ? { ...image.commercePromptImage, originalStorageKey: storedImage.storageKey } : undefined },
+                metadata: { ...imageMetadata({ ...storedImage, width: meta.width, height: meta.height }), prompt: image.prompt, commerceImage: image.commerceImage ? { ...image.commerceImage, originalStorageKey: storedImage.storageKey } : undefined, commercePromptImage: image.commercePromptImage ? { ...image.commercePromptImage, originalStorageKey: storedImage.storageKey } : undefined, commercePreview: image.commercePreview ? { ...image.commercePreview, originalStorageKey: storedImage.storageKey } : undefined },
             };
 
             setNodes((prev) => [...prev, node]);
@@ -3009,6 +3026,10 @@ function InfiniteCanvasPage() {
                 const promptNode = nodesRef.current.find((item) => item.metadata?.commerceSource?.kind === "prompt" && item.metadata.commerceSource.projectId === image.commercePromptImage?.projectId && item.metadata.commerceSource.versionId === image.commercePromptImage?.versionId);
                 if (promptNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: promptNode.id, toNodeId: id }]);
                 if (commerceBranch?.adoption && commerceBranch.adoption.source_id !== image.commercePromptImage.sourceId) setShowCommerceBranches(true);
+            }
+            if (image.commercePreview) {
+                const configNode = nodesRef.current.find((item) => item.id === image.commercePreview?.configNodeId);
+                if (configNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: configNode.id, toNodeId: id }]);
             }
             setSelectedNodeIds(new Set([id]));
             setSelectedConnectionId(null);
@@ -3203,7 +3224,7 @@ function InfiniteCanvasPage() {
                     connections={connections}
                     selectedNodeId={[...selectedNodeIds][0]}
                     onProjectChange={handleCommerceProjectChange}
-                    onInsertImage={(dataUrl, title, commerceImage, commercePromptImage) => insertAssistantImage({ id: nanoid(), prompt: title, dataUrl, commerceImage, commercePromptImage })}
+                    onInsertImage={(dataUrl, title, commerceImage, commercePromptImage, commercePreview) => insertAssistantImage({ id: nanoid(), prompt: title, dataUrl, commerceImage, commercePromptImage, commercePreview })}
                     onInsertText={insertAssistantText}
                     onInsertVideo={async (blob, title, projectId, deliverableId) => {
                         const media = await uploadMediaFile(blob, "video");
@@ -3299,6 +3320,11 @@ function InfiniteCanvasPage() {
                             onContextMenu={handleNodeContextMenu}
                         />
                     ))}
+
+                    {commerceTasks ? visibleNodes.filter((node) => node.type === CanvasNodeType.Config).map((node) => {
+                        const status = commerceNodeStatus(node.id, connections.some((edge) => edge.toNodeId === node.id), commerceTasks);
+                        return <div key={`commerce-status-${node.id}`} className="pointer-events-none absolute z-10 flex items-center gap-1 text-xs" style={{ left: node.position.x, top: node.position.y - 24, color: theme.node.muted }}><span className="size-1.5 rounded-full" style={{ background: statusColor[status] }} />{status}</div>;
+                    }) : null}
 
                     {referencePickerNodeId ? <button type="button" className="absolute left-1/2 top-4 z-[90] -translate-x-1/2 rounded-full border px-4 py-2 text-sm font-medium shadow-lg backdrop-blur" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border }} onClick={exitNodeReferenceSelection}>{t("canvas.references.selectingHint")}</button> : null}
 

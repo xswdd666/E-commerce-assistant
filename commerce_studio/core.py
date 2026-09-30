@@ -63,6 +63,7 @@ class Store:
                    "storyboard_versions": [], "storyboard_approval": None, "external": {"flova_project_id": "", "flova_project_url": ""},
                    "gallery_versions": [], "gallery_approval": None, "gallery_choices": {}, "gallery_reviews": [],
                    "prompt_versions": [], "prompt_adoption": None, "prompt_reviews": [],
+                   "canvas_preview_reviews": [], "canvas_preview_adoption": {},
                    "image_observations": [],
                    "jev_observations": [],
                    "video_approval": None, "shot_approvals": {}, "deliverables": [], "video_edits": [],
@@ -121,6 +122,8 @@ class Store:
             project.setdefault("prompt_versions", [])
             project.setdefault("prompt_adoption", None)
             project.setdefault("prompt_reviews", [])
+            project.setdefault("canvas_preview_reviews", [])
+            project.setdefault("canvas_preview_adoption", {})
             project.setdefault("image_observations", [])
             project.setdefault("video_approval", None)
             project.setdefault("shot_approvals", {})
