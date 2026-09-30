@@ -78,7 +78,7 @@ import { CanvasTopBar } from "@/components/canvas/canvas-top-bar";
 import { CommerceStudioPanel } from "@/components/canvas/commerce-studio-panel";
 import { studioApi, type StudioProject } from "@/services/api/commerce-studio";
 import { hiddenCommerceBranchNodeIds, type CommerceBranchState } from "@/lib/canvas/commerce-branches";
-import { commerceNodeStatus, type CommerceNodeStatus } from "@/lib/canvas/commerce-node-status";
+import { commerceNodeStatus, previewInputChanged, type CommerceNodeStatus } from "@/lib/canvas/commerce-node-status";
 import { ConnectionCreateMenu, NodeCreateMenu, type PendingConnectionCreate } from "@/components/canvas/canvas-create-menus";
 import {
     CanvasNodeType,
@@ -251,6 +251,8 @@ function InfiniteCanvasPage() {
     const [commerceOpen, setCommerceOpen] = useState(false);
     const [commerceBranch, setCommerceBranch] = useState<CommerceBranchState | null>(null);
     const [commerceTasks, setCommerceTasks] = useState<StudioProject["tasks"] | null>(null);
+    const [commerceContext, setCommerceContext] = useState<{ briefId?: string; masterId?: string } | null>(null);
+    const [staleCommerceNodes, setStaleCommerceNodes] = useState<Set<string>>(new Set());
     const [showCommerceBranches, setShowCommerceBranches] = useState(false);
     const [projectLoaded, setProjectLoaded] = useState(false);
     const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
@@ -287,11 +289,14 @@ function InfiniteCanvasPage() {
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
     const generationRequestsRef = useRef(new Map<string, CanvasGenerationRequest>());
     const videoPollIdsRef = useRef(new Set<string>());
+    const commerceReferenceHashesRef = useRef(new WeakMap<object, string>());
 
     useEffect(() => {
         let active = true;
         setCommerceBranch(null);
         setCommerceTasks(null);
+        setCommerceContext(null);
+        setStaleCommerceNodes(new Set());
         setShowCommerceBranches(false);
         void (async () => {
             try {
@@ -300,9 +305,10 @@ function InfiniteCanvasPage() {
                 if (active) {
                     setCommerceBranch(commerceBranchFromProject(project));
                     setCommerceTasks(project?.tasks || null);
+                    setCommerceContext(project ? { briefId: project.brief_versions.at(-1)?.id, masterId: project.master_versions.at(-1)?.id } : null);
                 }
             } catch {
-                if (active) { setCommerceBranch(null); setCommerceTasks(null); }
+                if (active) { setCommerceBranch(null); setCommerceTasks(null); setCommerceContext(null); }
             }
         })();
         return () => { active = false; };
@@ -311,7 +317,40 @@ function InfiniteCanvasPage() {
     const handleCommerceProjectChange = useCallback((project: StudioProject) => {
         setCommerceBranch(commerceBranchFromProject(project));
         setCommerceTasks(project.tasks);
+        setCommerceContext({ briefId: project.brief_versions.at(-1)?.id, masterId: project.master_versions.at(-1)?.id });
     }, []);
+
+    useEffect(() => {
+        let active = true;
+        if (!commerceTasks || !commerceContext) { setStaleCommerceNodes(new Set()); return; }
+        void (async () => {
+            const stale = new Set<string>();
+            for (const node of nodes) {
+                if (node.type !== CanvasNodeType.Config) continue;
+                const task = commerceTasks.findLast((item) => item.node_id === node.id || item.input_snapshot?.config_node_id === node.id);
+                const snapshot = task?.kind === "preview" ? task.input_snapshot : null;
+                if (!snapshot) continue;
+                try {
+                    const context = buildNodeGenerationContext(node.id, nodes, connections, node.metadata?.composerContent || node.metadata?.prompt || "");
+                    const current = { ...commerceContext, prompt: context.prompt, referenceNodeId: context.referenceImages.length === 1 ? context.referenceImages[0].id : undefined,
+                        connectionIds: connections.filter((edge) => edge.toNodeId === node.id).map((edge) => edge.id) };
+                    if (previewInputChanged(snapshot, current)) { stale.add(node.id); continue; }
+                    const referenceNode = nodes.find((item) => item.id === current.referenceNodeId);
+                    if (!referenceNode?.metadata) { stale.add(node.id); continue; }
+                    let digest = commerceReferenceHashesRef.current.get(referenceNode.metadata);
+                    if (!digest) {
+                        const hydrated = await hydrateNodeGenerationContext(context);
+                        const raw = await (await fetch(hydrated.referenceImages[0].dataUrl)).arrayBuffer();
+                        digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", raw)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+                        commerceReferenceHashesRef.current.set(referenceNode.metadata, digest);
+                    }
+                    if (previewInputChanged(snapshot, { ...current, referenceSha256: digest })) stale.add(node.id);
+                } catch { stale.add(node.id); }
+            }
+            if (active) setStaleCommerceNodes(stale);
+        })();
+        return () => { active = false; };
+    }, [nodes, connections, commerceTasks, commerceContext]);
 
     const statusColor: Record<CommerceNodeStatus, string> = {
         "等待连接": theme.node.faint,
@@ -320,6 +359,7 @@ function InfiniteCanvasPage() {
         "完成": statusColors.colorSuccess,
         "需审核": statusColors.colorWarning,
         "失败": statusColors.colorError,
+        "需重新核对": statusColors.colorWarning,
     };
 
     useEffect(() => { setShowCommerceBranches(false); }, [commerceBranch?.adoption?.source_id]);
@@ -3223,6 +3263,7 @@ function InfiniteCanvasPage() {
                     nodes={nodes}
                     connections={connections}
                     selectedNodeId={[...selectedNodeIds][0]}
+                    staleNodeIds={staleCommerceNodes}
                     onProjectChange={handleCommerceProjectChange}
                     onInsertImage={(dataUrl, title, commerceImage, commercePromptImage, commercePreview) => insertAssistantImage({ id: nanoid(), prompt: title, dataUrl, commerceImage, commercePromptImage, commercePreview })}
                     onInsertText={insertAssistantText}
@@ -3322,7 +3363,7 @@ function InfiniteCanvasPage() {
                     ))}
 
                     {commerceTasks ? visibleNodes.filter((node) => node.type === CanvasNodeType.Config).map((node) => {
-                        const status = commerceNodeStatus(node.id, connections.some((edge) => edge.toNodeId === node.id), commerceTasks);
+                        const status = commerceNodeStatus(node.id, connections.some((edge) => edge.toNodeId === node.id), commerceTasks, staleCommerceNodes.has(node.id));
                         return <div key={`commerce-status-${node.id}`} className="pointer-events-none absolute z-10 flex items-center gap-1 text-xs" style={{ left: node.position.x, top: node.position.y - 24, color: theme.node.muted }}><span className="size-1.5 rounded-full" style={{ background: statusColor[status] }} />{status}</div>;
                     }) : null}
 
