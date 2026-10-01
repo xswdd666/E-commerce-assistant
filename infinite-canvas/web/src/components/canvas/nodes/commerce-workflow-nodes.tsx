@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import localforage from "localforage";
 import { FileImage, FileText, Images, MessageSquareText, Sparkles } from "lucide-react";
 
@@ -57,10 +57,38 @@ async function materializeResults(ctx: CanvasNodeContext, projectId: string, pro
 function WorkflowContent({ ctx }: { ctx: CanvasNodeContext }) {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
+    const currentCtx = useRef(ctx);
+    currentCtx.current = ctx;
     const sourceId = ctx.node.metadata?.workflowSourceId;
     const versionId = ctx.node.metadata?.workflowVersionId;
     const isUpload = ctx.node.type === workflowKinds.upload;
     const isResult = ctx.node.type === workflowKinds.result;
+    useEffect(() => {
+        if (ctx.node.type !== workflowKinds.generate && ctx.node.type !== workflowKinds.views) return;
+        let disposed = false;
+        let running = false;
+        const refresh = async () => {
+            if (running || disposed) return;
+            running = true;
+            try {
+                const projectId = await studioId();
+                let project = await studioApi.get(projectId);
+                const pending = project.tasks.filter((task) => task.node_id === ctx.node.id && task.provider === "SeeAny" &&
+                    task.remote_id && !["待审核", "完成", "失败"].includes(task.status));
+                for (const task of pending) await studioApi.sync(projectId, task.id);
+                if (pending.length) project = await studioApi.get(projectId);
+                if (!disposed) await materializeResults(currentCtx.current, projectId, project);
+                if (!disposed) setError("");
+            } catch (cause) {
+                if (!disposed) setError(errorText(cause));
+            } finally {
+                running = false;
+            }
+        };
+        void refresh();
+        const timer = window.setInterval(() => void refresh(), 10_000);
+        return () => { disposed = true; window.clearInterval(timer); };
+    }, [ctx.node.id, ctx.node.type]);
     const upload = async (file?: File) => {
         if (!file) return;
         setBusy(true); setError("");
