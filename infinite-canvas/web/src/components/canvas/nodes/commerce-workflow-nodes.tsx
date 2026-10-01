@@ -178,8 +178,10 @@ function WorkflowPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =
         setOffer(next);
     });
     const run = () => guarded(async () => {
-        if (!offer) throw new Error("请先核对输入");
-        await studioApi.workflowRun(await studioId(), ctx.node.id, currentGraph(), offer.fingerprint, crypto.randomUUID());
+        const current = currentGraph();
+        const id = await studioId();
+        const approved = await studioApi.workflowQuote(id, ctx.node.id, current);
+        await studioApi.workflowRun(id, ctx.node.id, current, approved.fingerprint, crypto.randomUUID());
         setOffer(null);
     });
     const confirm = () => guarded(async () => {
@@ -193,7 +195,7 @@ function WorkflowPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =
         <div className="mb-3 flex items-center justify-between"><b>{ctx.node.title}</b><button type="button" onClick={onClose}>关闭</button></div>
         {notice ? <div className="mb-2 rounded border border-blue-400/40 bg-blue-500/10 p-2 text-blue-300">{busy ? <LoaderCircle className="mr-1 inline size-4 animate-spin" /> : null}{notice}</div> : null}
         {error ? <div className="mb-2 rounded border border-red-400/40 bg-red-500/10 p-2 text-red-300">请求失败：{error}</div> : null}
-        <div className="mb-3 text-xs" style={{ color: accent }}>模型费用：{offer?.estimate == null ? "未知" : `${offer.estimate} ${offer.currency || ""}`}。只有点击“生成候选 / 生成图片”才提交任务。</div>
+        <div className="mb-3 text-xs" style={{ color: accent }}>费用仅作参考：{offer?.estimate == null ? "未知" : `${offer.estimate} ${offer.currency || ""}`}，不影响生成。点击生成按钮后会直接提交任务。</div>
         <div className="mb-3 space-y-1"><b>实际连入</b>{inputEdges.length ? inputEdges.map((edge) => {
             const source = ctx.getNode(edge.fromNodeId);
             const latest = (project?.workflow_versions || []).filter((v) => v.node_id === source?.id).at(-1);
@@ -237,7 +239,7 @@ function WorkflowPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =
                 {([['主图比例', 'workflowMainRatio'], ['详情页比例', 'workflowDetailRatio']] as const).map(([label, key]) => <label key={key} className="block">{label} <select className="ml-2 bg-transparent" value={ctx.node.metadata?.[key] || (key === 'workflowMainRatio' ? '1:1' : '3:4')} onChange={(event) => { ctx.updateMetadata({ [key]: event.target.value }); setOffer(null); }}>{['1:1', '3:4', '4:3'].map((value) => <option key={value}>{value}</option>)}</select></label>)}
                 <div>出图类型（最多 6 项）</div><div className="flex flex-wrap gap-2">{["商品白底图", "亚马逊主图", "细节特写", "产品多角度", "营销主图海报", "大促营销主图", "首屏视觉图", "产品代言互动", "客户痛点展示", "核心卖点图", "产品场景展示图", "试穿试戴场景"].map((kind) => <label key={kind}><input type="checkbox" checked={galleryKinds.includes(kind)} onChange={(event) => { const next = event.target.checked ? [...galleryKinds, kind] : galleryKinds.filter((item) => item !== kind); setGalleryKinds(next); ctx.updateMetadata({ workflowGalleryKinds: next }); setOffer(null); }} /> {kind}</label>)}</div>
             </div> : null}
-            <div className="mt-3 flex flex-wrap items-center gap-4"><button type="button" className="underline" disabled={busy} onClick={() => void quote()}>核对输入与费用</button><button type="button" className="underline" disabled={busy || !offer} onClick={() => void run()}>{busy ? "SeeAny 生成中…" : "生成图片"}</button>{notice ? <span className="flex items-center gap-1 text-blue-300">{busy ? <LoaderCircle className="size-4 animate-spin" /> : null}{notice}</span> : null}{error ? <span className="text-red-300">失败：{error}</span> : null}</div>
+            <div className="mt-3 flex flex-wrap items-center gap-4"><button type="button" className="underline" disabled={busy} onClick={() => void run()}>{busy ? "SeeAny 生成中…" : "生成图片"}</button>{notice ? <span className="flex items-center gap-1 text-blue-300">{busy ? <LoaderCircle className="size-4 animate-spin" /> : null}{notice}</span> : null}{error ? <span className="text-red-300">失败：{error}</span> : null}</div>
             {offer ? <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify(offer.input_snapshot, null, 2)}</pre> : null}
         </>}
         {taskList.length ? <div className="mt-4 border-t pt-2"><b>任务</b>{taskList.map((task) => <div key={task.id} className="mt-1 text-xs">{task.id.slice(0, 8)} · {task.status} · {task.remote_id ? `远端 ${task.remote_id.slice(0, 12)}` : "无远端 ID"}
