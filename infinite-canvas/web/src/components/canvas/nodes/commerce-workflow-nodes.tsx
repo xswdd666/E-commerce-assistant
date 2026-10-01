@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import localforage from "localforage";
-import { FileImage, FileText, Images, MessageSquareText, Sparkles } from "lucide-react";
+import { FileImage, FileText, Images, LoaderCircle, MessageSquareText, Sparkles } from "lucide-react";
 
 import { registerNodeDefinitions } from "@/lib/canvas/node-registry";
 import type { CanvasAgentOp } from "@/lib/canvas/canvas-agent-ops";
@@ -56,6 +56,7 @@ async function materializeResults(ctx: CanvasNodeContext, projectId: string, pro
 
 function WorkflowContent({ ctx }: { ctx: CanvasNodeContext }) {
     const [busy, setBusy] = useState(false);
+    const [pending, setPending] = useState(false);
     const [error, setError] = useState("");
     const currentCtx = useRef(ctx);
     currentCtx.current = ctx;
@@ -64,7 +65,7 @@ function WorkflowContent({ ctx }: { ctx: CanvasNodeContext }) {
     const isUpload = ctx.node.type === workflowKinds.upload;
     const isResult = ctx.node.type === workflowKinds.result;
     useEffect(() => {
-        if (ctx.node.type !== workflowKinds.generate && ctx.node.type !== workflowKinds.views) return;
+        if (ctx.node.type !== workflowKinds.generate && ctx.node.type !== workflowKinds.views && ctx.node.type !== workflowKinds.gallery) return;
         let disposed = false;
         let running = false;
         const refresh = async () => {
@@ -73,10 +74,12 @@ function WorkflowContent({ ctx }: { ctx: CanvasNodeContext }) {
             try {
                 const projectId = await studioId();
                 let project = await studioApi.get(projectId);
-                const pending = project.tasks.filter((task) => task.node_id === ctx.node.id && task.provider === "SeeAny" &&
+                const pendingTasks = project.tasks.filter((task) => task.node_id === ctx.node.id && task.provider === "SeeAny" &&
                     task.remote_id && !["待审核", "完成", "失败"].includes(task.status));
-                for (const task of pending) await studioApi.sync(projectId, task.id);
-                if (pending.length) project = await studioApi.get(projectId);
+                setPending(pendingTasks.length > 0);
+                for (const task of pendingTasks) await studioApi.sync(projectId, task.id);
+                if (pendingTasks.length) project = await studioApi.get(projectId);
+                if (pendingTasks.length) setPending(project.tasks.some((task) => task.node_id === ctx.node.id && task.provider === "SeeAny" && task.remote_id && !["待审核", "完成", "失败"].includes(task.status)));
                 if (!disposed) await materializeResults(currentCtx.current, projectId, project);
                 if (!disposed) setError("");
             } catch (cause) {
@@ -117,6 +120,7 @@ function WorkflowContent({ ctx }: { ctx: CanvasNodeContext }) {
             })()}>{decision}</button>)}</div></> : null}
         {!isUpload && !isResult ? <><span>{versionId ? `已确认版本 ${versionId.slice(0, 12)}` : "尚无确认输出"}</span>
             <button type="button" className="self-start underline" onMouseDown={(event) => event.stopPropagation()} onClick={() => ctx.openPanel()}>查看输入 / 编辑 / 生成</button></> : null}
+        {pending ? <span className="flex items-center gap-1"><LoaderCircle className="size-4 animate-spin" />SeeAny 生成中，等待结果…</span> : null}
         {error ? <span className="text-red-500">{error}</span> : null}
     </div>;
 }
@@ -147,6 +151,11 @@ function WorkflowPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =
     }, [ctx]);
     useEffect(() => { void load().catch((e) => setError(errorText(e))); }, [load]);
     const taskList = (project?.tasks || []).filter((task) => task.node_id === ctx.node.id).slice().reverse();
+    useEffect(() => {
+        if (!isDetails || fields.length) return;
+        const candidate = taskList.find((task) => task.kind === "workflow_text" && task.status === "待审核" && task.candidates?.length);
+        if (candidate?.candidates) setFields(candidate.candidates.map((field) => ({ ...field, candidate_task_id: candidate.id })));
+    }, [isDetails, fields.length, taskList]);
     const versions = (project?.workflow_versions || []).filter((v) => v.node_id === ctx.node.id);
     const inputEdges = ctx.getConnections().filter((edge) => edge.toNodeId === ctx.node.id);
     const patchField = (index: number, patch: Partial<WorkflowField>) => setFields((current) => current.map((item, i) => i === index ? { ...item, ...patch } : item));
@@ -207,7 +216,7 @@ function WorkflowPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =
                 <textarea className="mt-2 h-16 w-full rounded border bg-transparent p-2" placeholder="给模型的补充要求（可选）" value={draft} onChange={(event) => { setDraft(event.target.value); ctx.updateMetadata({ workflowDraft: event.target.value }); setOffer(null); }} />
             </>}
             <div className="my-2">{taskList.filter((t) => t.kind === "workflow_text" && t.status === "待审核").map((task) => <div key={task.id} className="mb-2 rounded border p-2">
-                <b>候选 {task.id.slice(0, 8)}</b>{isDetails && !task.candidates?.length ? <p>模型未识别出可用字段，可手写后确认。</p> : null}{task.candidates?.map((field, index) => <div key={index} className="flex justify-between gap-2"><span>{field.field}：{field.value}</span><button type="button" className="underline" onClick={() => setFields((current) => [...current, { ...field, candidate_task_id: task.id }])}>选取</button></div>)}
+                <b>候选 {task.id.slice(0, 8)}</b>{isDetails && !task.candidates?.length ? <p>模型未识别出可用字段，可手写后确认。</p> : null}{isDetails && task.candidates?.length ? <button type="button" className="ml-2 underline" onClick={() => setFields(task.candidates!.map((field) => ({ ...field, candidate_task_id: task.id })))}>选取全部结构化信息</button> : null}{task.candidates?.map((field, index) => <div key={index} className="flex justify-between gap-2"><span>{field.field}：{field.value}</span><button type="button" className="underline" onClick={() => setFields((current) => [...current, { ...field, candidate_task_id: task.id }])}>选取</button></div>)}
                 {isPrompt && task.candidate_text ? <><p className="whitespace-pre-wrap">{task.candidate_text}</p><button type="button" className="underline" onClick={() => { setDraft(task.candidate_text!); setCandidateId(task.id); ctx.updateMetadata({ workflowDraft: task.candidate_text }); setOffer(null); }}>选此整份</button></> : null}
             </div>)}</div>
             <button type="button" className="mr-4 underline" disabled={busy} onClick={() => void guarded(async () => { const health = await studioApi.health(); if (!health.deepseek) throw new Error("DeepSeek 未配置，仍可手写确认"); await studioApi.workflowRun(await studioId(), ctx.node.id, currentGraph(), (await studioApi.workflowQuote(await studioId(), ctx.node.id, currentGraph())).fingerprint, crypto.randomUUID()); })}>生成候选 · DeepSeek</button>
@@ -223,7 +232,7 @@ function WorkflowPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =
                 <label>模型 <select className="ml-2 bg-transparent" value={ctx.node.metadata?.workflowModel || "nano-banana-pro"} onChange={(event) => { ctx.updateMetadata({ workflowModel: event.target.value }); setOffer(null); }}><option value="nano-banana-pro">Banana Pro</option><option value="gpt-image-2">GPT image-2</option></select></label>
                 <label className="block">分辨率 <select className="ml-2 bg-transparent" value={size} onChange={(event) => { setSize(event.target.value); ctx.updateMetadata({ workflowSize: event.target.value }); setOffer(null); }}><option>1K</option><option>2K</option></select></label>
                 {([['主图比例', 'workflowMainRatio'], ['详情页比例', 'workflowDetailRatio']] as const).map(([label, key]) => <label key={key} className="block">{label} <select className="ml-2 bg-transparent" value={ctx.node.metadata?.[key] || (key === 'workflowMainRatio' ? '1:1' : '3:4')} onChange={(event) => { ctx.updateMetadata({ [key]: event.target.value }); setOffer(null); }}>{['1:1', '3:4', '4:3'].map((value) => <option key={value}>{value}</option>)}</select></label>)}
-                <div>出图类型</div><div className="flex flex-wrap gap-2">{["商品白底图", "亚马逊主图", "细节特写", "产品多角度", "营销主图海报", "核心卖点图"].map((kind) => <label key={kind}><input type="checkbox" checked={galleryKinds.includes(kind)} onChange={(event) => { const next = event.target.checked ? [...galleryKinds, kind] : galleryKinds.filter((item) => item !== kind); setGalleryKinds(next); ctx.updateMetadata({ workflowGalleryKinds: next }); setOffer(null); }} /> {kind}</label>)}</div>
+                <div>出图类型（最多 6 项）</div><div className="flex flex-wrap gap-2">{["商品白底图", "亚马逊主图", "细节特写", "产品多角度", "营销主图海报", "大促营销主图", "首屏视觉图", "产品代言互动", "客户痛点展示", "核心卖点图", "产品场景展示图", "试穿试戴场景"].map((kind) => <label key={kind}><input type="checkbox" checked={galleryKinds.includes(kind)} onChange={(event) => { const next = event.target.checked ? [...galleryKinds, kind] : galleryKinds.filter((item) => item !== kind); setGalleryKinds(next); ctx.updateMetadata({ workflowGalleryKinds: next }); setOffer(null); }} /> {kind}</label>)}</div>
             </div> : null}
             <div className="mt-3 flex gap-4"><button type="button" className="underline" disabled={busy} onClick={() => void quote()}>核对输入与费用</button><button type="button" className="underline" disabled={busy || !offer} onClick={() => void run()}>生成图片</button></div>
             {offer ? <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify(offer.input_snapshot, null, 2)}</pre> : null}
