@@ -2,20 +2,21 @@ import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
 export const workflowKinds = {
     upload: "commerce:upload", details: "commerce:details", views: "commerce:views",
-    prompt: "commerce:prompt", generate: "commerce:generate", result: "commerce:result",
+    prompt: "commerce:prompt", generate: "commerce:generate", gallery: "commerce:gallery", result: "commerce:result",
 } as const;
 
 type Port = NonNullable<CanvasConnection["targetPort"]>;
 const output: Record<string, string> = {
     [workflowKinds.upload]: "image", [workflowKinds.details]: "product_details",
     [workflowKinds.views]: "image", [workflowKinds.prompt]: "prompt",
-    [workflowKinds.generate]: "image", [workflowKinds.result]: "image",
+    [workflowKinds.generate]: "image", [workflowKinds.gallery]: "image", [workflowKinds.result]: "image",
 };
 const input: Record<string, Partial<Record<Port, { kind: string; multiple: boolean }>>> = {
     [workflowKinds.details]: { image: { kind: "image", multiple: true } },
     [workflowKinds.views]: { image: { kind: "image", multiple: true }, product_details: { kind: "product_details", multiple: false } },
     [workflowKinds.prompt]: { image: { kind: "image", multiple: true }, product_details: { kind: "product_details", multiple: false } },
     [workflowKinds.generate]: { image: { kind: "image", multiple: true }, prompt: { kind: "prompt", multiple: false }, product_details: { kind: "product_details", multiple: false } },
+    [workflowKinds.gallery]: { image: { kind: "image", multiple: true }, prompt: { kind: "prompt", multiple: false }, product_details: { kind: "product_details", multiple: false } },
     [workflowKinds.result]: { image: { kind: "image", multiple: false } },
 };
 
@@ -60,7 +61,11 @@ export function workflowGraph(nodes: CanvasNodeData[], connections: CanvasConnec
     return {
         nodes: selected.map((node) => ({ id: node.id, kind: node.type,
             source_id: node.metadata?.workflowSourceId, draft: node.metadata?.workflowDraft,
-            view: node.metadata?.workflowView, ratio: node.metadata?.workflowRatio })),
+            view: node.metadata?.workflowView, ratio: node.metadata?.workflowRatio, model: node.metadata?.workflowModel,
+            gallery_kinds: node.metadata?.workflowGalleryKinds, size: node.metadata?.workflowSize,
+            main_ratio: node.metadata?.workflowMainRatio, detail_ratio: node.metadata?.workflowDetailRatio,
+            product_name: node.metadata?.workflowProductName, platform: node.metadata?.workflowPlatform,
+            market: node.metadata?.workflowMarket, language: node.metadata?.workflowLanguage, style: node.metadata?.workflowStyle })),
         edges: connections.filter((edge) => ids.has(edge.fromNodeId) && ids.has(edge.toNodeId) &&
             selected.find((node) => node.id === edge.toNodeId)?.type !== workflowKinds.result)
             .map((edge) => ({ id: edge.id, fromNodeId: edge.fromNodeId, toNodeId: edge.toNodeId,

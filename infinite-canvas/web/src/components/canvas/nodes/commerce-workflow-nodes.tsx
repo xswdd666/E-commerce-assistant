@@ -28,7 +28,7 @@ function graph(ctx: CanvasNodeContext) { return workflowGraph(ctx.getNodes(), ct
 
 async function materializeResults(ctx: CanvasNodeContext, projectId: string, project: StudioProject) {
     const tasks = project.tasks.filter((task) => task.node_id === ctx.node.id &&
-        (task.kind === "workflow_image" || task.kind === "workflow_views"));
+        (task.kind === "workflow_image" || task.kind === "workflow_views" || task.kind === "workflow_gallery"));
     const ops: CanvasAgentOp[] = [];
     const known = new Set(ctx.getNodes().map((node) => node.id));
     for (const task of tasks) for (const sourceId of task.asset_ids || []) {
@@ -129,12 +129,15 @@ function WorkflowPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =
     const [draft, setDraft] = useState(ctx.node.metadata?.workflowDraft || "");
     const [view, setView] = useState(ctx.node.metadata?.workflowView || "正面");
     const [ratio, setRatio] = useState(ctx.node.metadata?.workflowRatio || "1:1");
+    const [galleryKinds, setGalleryKinds] = useState(ctx.node.metadata?.workflowGalleryKinds || ["商品白底图", "亚马逊主图"]);
+    const [size, setSize] = useState(ctx.node.metadata?.workflowSize || "1K");
     const [fields, setFields] = useState<WorkflowField[]>([]);
     const [candidateId, setCandidateId] = useState<string | undefined>();
     const [resolvingTaskId, setResolvingTaskId] = useState<string | null>(null);
     const [resolutionNote, setResolutionNote] = useState("");
     const isDetails = ctx.node.type === workflowKinds.details;
     const isPrompt = ctx.node.type === workflowKinds.prompt;
+    const isGallery = ctx.node.type === workflowKinds.gallery;
     const isText = isDetails || isPrompt;
     const load = useCallback(async () => {
         const id = await studioId();
@@ -155,7 +158,9 @@ function WorkflowPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =
     const currentGraph = () => {
         const g = graph(ctx);
         const node = g.nodes.find((item) => item.id === ctx.node.id);
-        if (node) { node.draft = draft; node.view = view; node.ratio = ratio; }
+        if (node) { node.draft = draft; node.view = view; node.ratio = ratio; node.model = ctx.node.metadata?.workflowModel;
+            node.gallery_kinds = galleryKinds; node.size = size; node.main_ratio = ctx.node.metadata?.workflowMainRatio || "1:1"; node.detail_ratio = ctx.node.metadata?.workflowDetailRatio || "3:4";
+            node.product_name = ctx.node.metadata?.workflowProductName; node.platform = ctx.node.metadata?.workflowPlatform; node.market = ctx.node.metadata?.workflowMarket; node.language = ctx.node.metadata?.workflowLanguage || "中文"; node.style = ctx.node.metadata?.workflowStyle; }
         return g;
     };
     const quote = () => guarded(async () => {
@@ -211,6 +216,7 @@ function WorkflowPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =
         </> : <>
             {ctx.node.type === workflowKinds.views ? <label>视角 <select className="ml-2 bg-transparent" value={view} onChange={(event) => { setView(event.target.value); ctx.updateMetadata({ workflowView: event.target.value }); setOffer(null); }}><option>正面</option><option>侧面</option><option>背面</option></select></label> : null}
             {ctx.node.type === workflowKinds.generate ? <label>比例 <select className="ml-2 bg-transparent" value={ratio} onChange={(event) => { setRatio(event.target.value); ctx.updateMetadata({ workflowRatio: event.target.value }); setOffer(null); }}>{["1:1", "3:4", "4:3", "9:16", "16:9", "3:2", "2:3"].map((r) => <option key={r}>{r}</option>)}</select></label> : null}
+            {isGallery ? <div className="space-y-2"><label>模型 <select className="ml-2 bg-transparent" value={ctx.node.metadata?.workflowModel || "nano-banana-pro"} onChange={(event) => { ctx.updateMetadata({ workflowModel: event.target.value }); setOffer(null); }}><option value="nano-banana-pro">Banana Pro</option><option value="gpt-image-2">GPT image-2</option></select></label><label className="block">分辨率 <select className="ml-2 bg-transparent" value={size} onChange={(event) => { setSize(event.target.value); ctx.updateMetadata({ workflowSize: event.target.value }); setOffer(null); }}><option>1K</option><option>2K</option></select></label><div>出图类型</div><div className="flex flex-wrap gap-2">{["商品白底图", "亚马逊主图", "细节特写", "产品多角度", "营销主图海报", "核心卖点图"].map((kind) => <label key={kind}><input type="checkbox" checked={galleryKinds.includes(kind)} onChange={(event) => { const next = event.target.checked ? [...galleryKinds, kind] : galleryKinds.filter((item) => item !== kind); setGalleryKinds(next); ctx.updateMetadata({ workflowGalleryKinds: next }); setOffer(null); }} /> {kind}</label>)}</div></div> : null}
             <div className="mt-3 flex gap-4"><button type="button" className="underline" disabled={busy} onClick={() => void quote()}>核对输入与费用</button><button type="button" className="underline" disabled={busy || !offer} onClick={() => void run()}>生成图片</button></div>
             {offer ? <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify(offer.input_snapshot, null, 2)}</pre> : null}
         </>}
@@ -227,6 +233,7 @@ const specs: Array<[string, string, React.ReactNode, string]> = [
     [workflowKinds.views, "生成白底三视图", <Images className="size-5" />, "从相连原图生成指定视角"],
     [workflowKinds.prompt, "提示词", <MessageSquareText className="size-5" />, "手写或生成后确认版本"],
     [workflowKinds.generate, "生成商品图", <Sparkles className="size-5" />, "读取相连图片和确认提示词"],
+    [workflowKinds.gallery, "电商套图", <Images className="size-5" />, "按模板批量生成主图、详情和卖点图"],
     [workflowKinds.result, "商品图结果", <FileImage className="size-5" />, "独立生成结果"],
 ];
 let registered = false;

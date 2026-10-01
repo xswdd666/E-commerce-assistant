@@ -19,7 +19,7 @@ from .service import provider_key, _existing_request
 OUTPUTS = {
     "commerce:upload": "image", "commerce:details": "product_details",
     "commerce:views": "image", "commerce:prompt": "prompt",
-    "commerce:generate": "image", "commerce:result": "image",
+    "commerce:generate": "image", "commerce:gallery": "image", "commerce:result": "image",
 }
 INPUTS = {
     "commerce:details": {"image": ("image", True), "text": ("text", False)},
@@ -27,10 +27,20 @@ INPUTS = {
     "commerce:prompt": {"image": ("image", True), "product_details": ("product_details", False)},
     "commerce:generate": {"image": ("image", True), "prompt": ("prompt", False),
                           "product_details": ("product_details", False)},
+    "commerce:gallery": {"image": ("image", True), "prompt": ("prompt", False),
+                         "product_details": ("product_details", False)},
 }
 TEXT_KINDS = {"commerce:details", "commerce:prompt"}
 PROVIDER = {"commerce:details": "DeepSeek", "commerce:prompt": "DeepSeek",
-            "commerce:views": "SeeAny", "commerce:generate": "SeeAny"}
+            "commerce:views": "SeeAny", "commerce:generate": "SeeAny", "commerce:gallery": "SeeAny"}
+GALLERY_KINDS = {
+    "商品白底图": "纯白背景，商品完整居中，保留真实轮廓、颜色和标识，柔和自然阴影，不添加文字和道具",
+    "亚马逊主图": "符合亚马逊主图用途：纯白背景、仅展示商品本体及实际随附配件，不添加文字、徽章或虚构功能",
+    "细节特写": "展示商品真实可见的材质和工艺细节，不虚构不可见结构",
+    "产品多角度": "从另一个角度展示同一商品，保持外观一致；未提供的背面结构仅作推断",
+    "营销主图海报": "制作商品营销主图海报，突出已提供的真实卖点，保留商品外观和品牌标识",
+    "核心卖点图": "将已提供的核心卖点可视化，商品外观准确，不编造参数或认证",
+}
 
 
 def _graph(body):
@@ -115,7 +125,7 @@ def quote(store, project, body):
             value.update(version_id=version["id"], text=version.get("text"), fields=version.get("fields"))
         inputs.append(value)
     ports = [item["port"] for item in inputs]
-    if kind in ("commerce:details", "commerce:views", "commerce:generate") and "image" not in ports:
+    if kind in ("commerce:details", "commerce:views", "commerce:generate", "commerce:gallery") and "image" not in ports:
         raise ValueError("请先连接商品原图")
     if kind == "commerce:generate" and "prompt" not in ports:
         raise ValueError("请先连接并选择已确认提示词版本")
@@ -126,11 +136,29 @@ def quote(store, project, body):
     snapshot = {"node_id": node_id, "kind": kind, "inputs": inputs,
                 "draft": str(target.get("draft") or ""), "view": target.get("view"),
                 "ratio": target.get("ratio") or "1:1", "model": target.get("model") or
-                ("deepseek-flash" if kind in TEXT_KINDS else "nano-banana-pro" if kind == "commerce:views" else "nano2")}
-    if snapshot["model"] != ("deepseek-flash" if kind in TEXT_KINDS else "nano-banana-pro" if kind == "commerce:views" else "nano2"):
+                ("deepseek-flash" if kind in TEXT_KINDS else "nano-banana-pro" if kind in ("commerce:views", "commerce:gallery") else "nano2")}
+    if snapshot["model"] not in (("nano-banana-pro", "gpt-image-2") if kind == "commerce:gallery" else
+                                  ("deepseek-flash",) if kind in TEXT_KINDS else
+                                  ("nano-banana-pro",) if kind == "commerce:views" else ("nano2",)):
         raise ValueError("当前节点尚不支持所选模型")
     if kind == "commerce:generate" and snapshot["ratio"] not in ("1:1", "3:4", "4:3", "9:16", "16:9", "3:2", "2:3"):
         raise ValueError("图片比例不受支持")
+    if kind == "commerce:gallery":
+        kinds = target.get("gallery_kinds") or []
+        if not isinstance(kinds, list) or not 1 <= len(kinds) <= 6 or len(set(kinds)) != len(kinds) or any(k not in GALLERY_KINDS for k in kinds):
+            raise ValueError("请选择 1 至 6 种套图类型")
+        if len([i for i in inputs if i["port"] == "image"]) > 6:
+            raise ValueError("电商套图最多连接 6 张商品图")
+        size = target.get("size") or "1K"
+        main_ratio, detail_ratio = target.get("main_ratio") or "1:1", target.get("detail_ratio") or "3:4"
+        if size not in ("1K", "2K") or main_ratio not in ("1:1", "3:4", "4:3") or detail_ratio not in ("1:1", "3:4", "4:3"):
+            raise ValueError("套图分辨率或比例无效")
+        snapshot.update(gallery_kinds=kinds, size=size, main_ratio=main_ratio, detail_ratio=detail_ratio,
+                        product_name=str(target.get("product_name") or "商品")[:100],
+                        platform=str(target.get("platform") or "")[:80], market=str(target.get("market") or "")[:80],
+                        language=str(target.get("language") or "中文")[:40], style=str(target.get("style") or "")[:120])
+        if len(snapshot["draft"]) > 1000:
+            raise ValueError("商品信息过长")
     return {"provider": PROVIDER[kind], "input_snapshot": snapshot,
             "fingerprint": fingerprint(snapshot), "estimate": None, "currency": None,
             "pricing_source": "未核实，费用未知", "reliable": False}
@@ -195,7 +223,7 @@ def run(store, project, body):
     key = provider_key("DEEPSEEK_API_KEY" if kind in TEXT_KINDS else "SEEANY_API_KEY")
     if not key:
         raise ValueError(f"缺少 {offer['provider']} API Key")
-    task = {"id": ident(), "kind": "workflow_text" if kind in TEXT_KINDS else "workflow_views" if kind == "commerce:views" else "workflow_image",
+    task = {"id": ident(), "kind": "workflow_text" if kind in TEXT_KINDS else "workflow_views" if kind == "commerce:views" else "workflow_gallery" if kind == "commerce:gallery" else "workflow_image",
             "node_id": snapshot["node_id"], "provider": offer["provider"], "model": snapshot["model"], "status": "远端运行中",
             "idempotency_key": request_id, "input_snapshot": snapshot, "estimate": None, "actual": None,
             "currency": None, "pricing_source": offer["pricing_source"], "remote_id": None,
@@ -233,7 +261,24 @@ def run(store, project, body):
             for image in (i for i in snapshot["inputs"] if i["port"] == "image"):
                 asset, raw = store.source_bytes(project, image["source_id"])
                 uploaded.append(seeany.upload_image(key, asset["name"], raw))
-            if kind == "commerce:views":
+            if kind == "commerce:gallery":
+                details = next((i["text"] for i in snapshot["inputs"] if i["port"] == "product_details"), "")
+                extra = next((i["text"] for i in snapshot["inputs"] if i["port"] == "prompt"), "")
+                selling_points = "\n".join(part for part in (snapshot["draft"], details) if part)
+                groups = []
+                for name in snapshot["gallery_kinds"]:
+                    groups.append({"mode": snapshot["model"], "name": name, "cateName": name,
+                                   "size": snapshot["size"], "imgNum": 1,
+                                   "imgRatio": snapshot["detail_ratio"] if name in ("细节特写", "核心卖点图") else snapshot["main_ratio"],
+                                   "prompt": f"基于输入商品图生成{name}。{GALLERY_KINDS[name]}。商品信息：{selling_points}。{extra}"[:4000],
+                                   "options": {"电商平台": snapshot["platform"], "目标市场": snapshot["market"], "文案语种": snapshot["language"]},
+                                   "refImgs": []})
+                payload = {"aiTypeId": 2373, "aiType": "imageSets", "inputImgs": uploaded,
+                           "productName": snapshot["product_name"], "sellingPoints": selling_points,
+                           "platform": snapshot["platform"], "desMarket": snapshot["market"],
+                           "desLang": snapshot["language"], "visualStyle": snapshot["style"], "groups": groups}
+                endpoint = "/api/ai/grouptask"
+            elif kind == "commerce:views":
                 payload = {"aiTypeId": 464, "aiType": "multiview", "inputImgs": uploaded,
                            "views": {"正面": "front", "侧面": "side", "背面": "back"}[snapshot["view"]],
                            "imgNum": 1, "imgRatio": "1:1", "mode": "nano-banana-pro", "size": "1K"}
@@ -262,7 +307,7 @@ def run(store, project, body):
 
 def review(store, project, body):
     task = next((t for t in project["tasks"] if t["id"] == body.get("task_id") and
-                 t.get("kind") in ("workflow_image", "workflow_views")), None)
+                 t.get("kind") in ("workflow_image", "workflow_views", "workflow_gallery")), None)
     if not task or body.get("source_id") not in task.get("asset_ids", []):
         raise ValueError("图片结果不存在")
     if body.get("decision") not in ("采用", "废图"):

@@ -121,6 +121,18 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(task["status"], "待核对")
         self.assertEqual(task["remote_id"], "remote-empty")
 
+    def test_gallery_builds_template_groups(self):
+        body = {"node_id": "gallery", "graph": {"nodes": [
+            {"id": "upload", "kind": "commerce:upload", "source_id": self.source["id"]},
+            {"id": "gallery", "kind": "commerce:gallery", "gallery_kinds": ["商品白底图", "亚马逊主图"], "size": "1K", "main_ratio": "1:1", "detail_ratio": "3:4", "platform": "Amazon"}],
+            "edges": [{"id": "img", "fromNodeId": "upload", "toNodeId": "gallery", "targetPort": "image"}]}}
+        offer = workflow.quote(self.store, self.project, body)
+        with patch.object(workflow, "provider_key", return_value="test"), patch.object(workflow.seeany, "upload_image", return_value="https://example.test/input.png"), patch.object(workflow.seeany, "submit", return_value={"data": {"task_uuid": "gallery-1"}}) as submit:
+            workflow.run(self.store, self.project, {**body, "approved_fingerprint": offer["fingerprint"], "request_id": "gallery-123"})
+        payload = submit.call_args.args[2]
+        self.assertEqual(payload["aiTypeId"], 2373)
+        self.assertEqual([item["cateName"] for item in payload["groups"]], ["商品白底图", "亚马逊主图"])
+
     def test_unknown_submission_blocks_new_charge_until_manual_resolution(self):
         version = workflow.confirm(self.store, self.project, {"node_id": "prompt", "kind": "commerce:prompt", "text": "白底展示"})
         body = {"node_id": "generate", "graph": self.graph(version["id"])}

@@ -99,6 +99,15 @@ export type CanvasNodeMetadata = {
     workflowReferenceIds?: string[];
     workflowModel?: string;
     workflowInferred?: boolean;
+    workflowGalleryKinds?: string[];
+    workflowSize?: string;
+    workflowMainRatio?: string;
+    workflowDetailRatio?: string;
+    workflowProductName?: string;
+    workflowPlatform?: string;
+    workflowMarket?: string;
+    workflowLanguage?: string;
+    workflowStyle?: string;
     groupId?: string;
     interactive?: boolean; // Plugin node interaction/move state; see CanvasNodeDefinition.interactionToggle.
 };

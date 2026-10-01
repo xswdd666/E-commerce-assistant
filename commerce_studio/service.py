@@ -506,7 +506,7 @@ def sync(store, project, task_id):
                     source["origin"] = "SeeAny prompt preview"
                     source["prompt_version_id"] = task["input_snapshot"]["version_id"]
                     source["reference_ids"] = [task["input_snapshot"]["reference_id"]]
-                elif task.get("kind") in ("workflow_image", "workflow_views"):
+                elif task.get("kind") in ("workflow_image", "workflow_views", "workflow_gallery"):
                     source["origin"] = "SeeAny workflow result"
                     source["canvas_node_id"] = task["node_id"]
                     source["task_id"] = task["id"]

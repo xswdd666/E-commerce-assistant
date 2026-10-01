@@ -54,7 +54,7 @@ export type StudioProject = {
 export type MasterRequest = { group: number; view_label: string; views: string; source_id: string };
 export type StudioQuote = { fingerprint: string; estimate: number | null; currency?: string | null; pricing_source: string; input_snapshot: unknown };
 export type WorkflowField = { field: string; value: string; status: "待核实" | "已知事实" | "创意假设"; source_id?: string; candidate_task_id?: string };
-export type WorkflowGraph = { nodes: Array<{ id: string; kind: string; source_id?: string; draft?: string; view?: string; ratio?: string }>; edges: Array<{ id: string; fromNodeId: string; toNodeId: string; targetPort?: string; selectedVersionId?: string }> };
+export type WorkflowGraph = { nodes: Array<{ id: string; kind: string; source_id?: string; draft?: string; view?: string; ratio?: string; model?: string; gallery_kinds?: string[]; size?: string; main_ratio?: string; detail_ratio?: string; product_name?: string; platform?: string; market?: string; language?: string; style?: string }>; edges: Array<{ id: string; fromNodeId: string; toNodeId: string; targetPort?: string; selectedVersionId?: string }> };
 export type PreviewRequest = { canvas_project_id: string; config_node_id: string; reference_node_id: string; connection_ids: string[]; prompt: string; ratio: string; reference_data_url: string };
 export type FlovaCanvasContext = { canvas_project_id: string; config_node_id: string; connection_ids: string[]; prompt: string; reference_images: Array<{ node_id: string; sha256: string }>; reference_media: Array<{ node_id: string; source_id: string; sha256: string; kind: "video" | "audio" }> };
 
