@@ -130,6 +130,7 @@ function WorkflowPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =
     const [offer, setOffer] = useState<StudioQuote | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
+    const [notice, setNotice] = useState("");
     const [draft, setDraft] = useState(ctx.node.metadata?.workflowDraft || "");
     const [view, setView] = useState(ctx.node.metadata?.workflowView || "正面");
     const [ratio, setRatio] = useState(ctx.node.metadata?.workflowRatio || "1:1");
@@ -160,8 +161,8 @@ function WorkflowPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =
     const inputEdges = ctx.getConnections().filter((edge) => edge.toNodeId === ctx.node.id);
     const patchField = (index: number, patch: Partial<WorkflowField>) => setFields((current) => current.map((item, i) => i === index ? { ...item, ...patch } : item));
     const guarded = async (action: () => Promise<void>) => {
-        setBusy(true); setError("");
-        try { await action(); await load(); } catch (e) { setError(errorText(e)); }
+        setBusy(true); setError(""); setNotice("正在提交请求…");
+        try { await action(); await load(); setNotice(isText ? "DeepSeek 已返回候选，请检查并确认字段。" : "请求已提交。生成完成后会自动回填画布。"); } catch (e) { setNotice(""); setError(errorText(e)); }
         finally { setBusy(false); }
     };
     const currentGraph = () => {
@@ -190,6 +191,8 @@ function WorkflowPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =
     const accent = ctx.theme.node.muted;
     return <div className="w-[430px] max-h-[72vh] overflow-auto rounded-xl border p-4 text-sm shadow-xl" style={{ background: ctx.theme.node.panel, borderColor: ctx.theme.node.stroke, color: ctx.theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between"><b>{ctx.node.title}</b><button type="button" onClick={onClose}>关闭</button></div>
+        {notice ? <div className="mb-2 rounded border border-blue-400/40 bg-blue-500/10 p-2 text-blue-300">{busy ? <LoaderCircle className="mr-1 inline size-4 animate-spin" /> : null}{notice}</div> : null}
+        {error ? <div className="mb-2 rounded border border-red-400/40 bg-red-500/10 p-2 text-red-300">请求失败：{error}</div> : null}
         <div className="mb-3 text-xs" style={{ color: accent }}>模型费用：{offer?.estimate == null ? "未知" : `${offer.estimate} ${offer.currency || ""}`}。只有点击“生成候选 / 生成图片”才提交任务。</div>
         <div className="mb-3 space-y-1"><b>实际连入</b>{inputEdges.length ? inputEdges.map((edge) => {
             const source = ctx.getNode(edge.fromNodeId);
@@ -219,7 +222,7 @@ function WorkflowPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =
                 <b>候选 {task.id.slice(0, 8)}</b>{isDetails && !task.candidates?.length ? <p>模型未识别出可用字段，可手写后确认。</p> : null}{isDetails && task.candidates?.length ? <button type="button" className="ml-2 underline" onClick={() => setFields(task.candidates!.map((field) => ({ ...field, candidate_task_id: task.id })))}>选取全部结构化信息</button> : null}{task.candidates?.map((field, index) => <div key={index} className="flex justify-between gap-2"><span>{field.field}：{field.value}</span><button type="button" className="underline" onClick={() => setFields((current) => [...current, { ...field, candidate_task_id: task.id }])}>选取</button></div>)}
                 {isPrompt && task.candidate_text ? <><p className="whitespace-pre-wrap">{task.candidate_text}</p><button type="button" className="underline" onClick={() => { setDraft(task.candidate_text!); setCandidateId(task.id); ctx.updateMetadata({ workflowDraft: task.candidate_text }); setOffer(null); }}>选此整份</button></> : null}
             </div>)}</div>
-            <button type="button" className="mr-4 underline" disabled={busy} onClick={() => void guarded(async () => { const health = await studioApi.health(); if (!health.deepseek) throw new Error("DeepSeek 未配置，仍可手写确认"); await studioApi.workflowRun(await studioId(), ctx.node.id, currentGraph(), (await studioApi.workflowQuote(await studioId(), ctx.node.id, currentGraph())).fingerprint, crypto.randomUUID()); })}>生成候选 · DeepSeek</button>
+            <button type="button" className="mr-4 underline" disabled={busy} onClick={() => void guarded(async () => { const health = await studioApi.health(); if (!health.deepseek) throw new Error("DeepSeek 未配置，仍可手写确认"); const current = currentGraph(); const approved = await studioApi.workflowQuote(await studioId(), ctx.node.id, current); await studioApi.workflowRun(await studioId(), ctx.node.id, current, approved.fingerprint, crypto.randomUUID()); })}>{busy ? "DeepSeek 生成中…" : "生成候选 · DeepSeek"}</button>
             <button type="button" className="underline" disabled={busy} onClick={() => void confirm()}>确认新版本</button>
             {versions.length ? <p className="mt-2 text-xs">已确认 {versions.length} 版；当前输出 {ctx.node.metadata?.workflowVersionId?.slice(0, 8)}</p> : null}
         </> : <>
@@ -240,7 +243,6 @@ function WorkflowPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =
         {taskList.length ? <div className="mt-4 border-t pt-2"><b>任务</b>{taskList.map((task) => <div key={task.id} className="mt-1 text-xs">{task.id.slice(0, 8)} · {task.status} · {task.remote_id ? `远端 ${task.remote_id.slice(0, 12)}` : "无远端 ID"}
             {task.error ? ` · ${task.error}` : ""} {task.provider === "SeeAny" && task.remote_id && task.status !== "完成" ? <button type="button" className="underline" disabled={busy} onClick={() => void guarded(async () => { await studioApi.sync(await studioId(), task.id); })}>同步</button> : null}
             {task.status === "待核对" && !task.remote_id ? <><button type="button" className="ml-2 underline" disabled={busy} onClick={() => { setResolvingTaskId(task.id); setResolutionNote(""); }}>记录远端核对</button>{resolvingTaskId === task.id ? <div className="mt-1"><input className="w-full rounded border bg-transparent px-1" placeholder="填写供应商后台确认无任务的依据" value={resolutionNote} onChange={(event) => setResolutionNote(event.target.value)} /><button type="button" className="mt-1 underline" disabled={busy || !resolutionNote.trim()} onClick={() => void guarded(async () => { await studioApi.resolveUnidentifiedTask(await studioId(), task.id, resolutionNote); setResolvingTaskId(null); setResolutionNote(""); })}>确认远端无任务</button></div> : null}</> : null}</div>)}</div> : null}
-        {error ? <p className="mt-2 text-red-500">{error}</p> : null}
     </div>;
 }
 
