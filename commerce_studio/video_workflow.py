@@ -207,7 +207,7 @@ def run(store, project, body):
         asset = next(source for source in project["sources"] if source["id"] == image["source_id"])
         raw = (store.root / "files" / project["id"] / asset["id"]).read_bytes()
         script = next(item for item in snapshot["inputs"] if item["port"] == "script")["shots"][snapshot["shot_index"]]
-        files = [(asset["name"], raw), ("shot-script.json", json.dumps(script, ensure_ascii=False).encode())]
+        files = [(asset["name"], raw)]
         prompt = f"只制作第 {snapshot['shot_index'] + 1} 个商品分镜，目标时长 4 秒，画幅 {snapshot['ratio']}。严格依据已上传商品图和分镜脚本，不生成其他镜头。分镜脚本：{json.dumps(script, ensure_ascii=False)}"
     else:
         files, prompt = [], "将上传的四个已确认 4 秒商品分镜按编号 1 至 4 合成为约 15 秒广告视频，保持顺序和商品外观一致。"
