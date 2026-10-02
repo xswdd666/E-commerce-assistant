@@ -11,6 +11,13 @@ from commerce_studio import video_workflow
 
 
 class VideoWorkflowTests(unittest.TestCase):
+    def test_task_is_visible_to_its_canvas_node(self):
+        project = {"tasks": []}
+        snapshot = {"node_id": "script-node", "kind": video_workflow.SCRIPT_KIND}
+        video_workflow._task(project, snapshot, "DeepSeek", "request-123")
+        visible = [task for task in project["tasks"] if task.get("node_id") == "script-node"]
+        self.assertEqual(len(visible), 1)
+
     def test_script_confirm_and_shot_quote(self):
         with tempfile.TemporaryDirectory() as root:
             store = Store(Path(root))

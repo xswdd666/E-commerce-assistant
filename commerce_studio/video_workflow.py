@@ -109,7 +109,7 @@ def quote(store, project, body):
 
 
 def _task(project, snapshot, provider, request_id):
-    task = {"id": ident(), "kind": snapshot["kind"], "provider": provider, "model": snapshot.get("model", provider),
+    task = {"id": ident(), "node_id": snapshot["node_id"], "kind": snapshot["kind"], "provider": provider, "model": snapshot.get("model", provider),
             "status": "已点击", "idempotency_key": request_id, "input_snapshot": snapshot, "remote_id": None,
             "created": stamp(), "updated": stamp()}
     project.setdefault("tasks", []).append(task)
