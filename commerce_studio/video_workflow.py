@@ -153,10 +153,15 @@ def _run_flova_worker(store, project_id, task_id, prompt, files, compose=False):
             store.save(project)
         if task["status"] == "待审核":
             project = store.load(project_id)
-            items = flova_flow.resources(project).get("items", [])
+            # The video branch owns a separate Flova project; reuse the resource
+            # helper with a temporary external alias without changing the frozen
+            # image workflow's project binding.
+            flova_project = dict(project)
+            flova_project["external"] = dict(project.get("external") or {}, flova_project_id=remote_project)
+            items = flova_flow.resources(flova_project).get("items", [])
             videos = [item for item in items if item.get("media_type") == "video"]
             if videos:
-                deliverable = flova_flow.pull_video_resource(store, project, videos[-1]["resource_id"])
+                deliverable = flova_flow.pull_video_resource(store, flova_project, videos[-1]["resource_id"])
                 with store.lock:
                     project = store.load(project_id)
                     task = next(item for item in project["tasks"] if item["id"] == task_id)
