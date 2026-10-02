@@ -108,6 +108,10 @@ export type CanvasNodeMetadata = {
     workflowMarket?: string;
     workflowLanguage?: string;
     workflowStyle?: string;
+    workflowShotIndex?: number;
+    workflowDeliverableId?: string;
+    workflowVideoRatio?: string;
+    workflowVideoModel?: string;
     groupId?: string;
     interactive?: boolean; // Plugin node interaction/move state; see CanvasNodeDefinition.interactionToggle.
 };
@@ -126,7 +130,7 @@ export type CanvasConnection = {
     id: string;
     fromNodeId: string;
     toNodeId: string;
-    targetPort?: "image" | "product_details" | "prompt" | "text";
+    targetPort?: "image" | "product_details" | "prompt" | "text" | "script" | "video";
     selectedVersionId?: string;
 };
 

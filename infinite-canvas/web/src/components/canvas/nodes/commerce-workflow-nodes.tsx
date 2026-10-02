@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import localforage from "localforage";
-import { FileImage, FileText, Images, LoaderCircle, MessageSquareText, Sparkles } from "lucide-react";
+import { Clapperboard, FileImage, FileText, Film, Images, LoaderCircle, MessageSquareText, Sparkles } from "lucide-react";
 
 import { registerNodeDefinitions } from "@/lib/canvas/node-registry";
 import type { CanvasAgentOp } from "@/lib/canvas/canvas-agent-ops";
 import { workflowGraph, workflowKinds } from "@/lib/canvas/commerce-workflow-graph";
 import { uploadImage } from "@/services/image-storage";
-import { studioApi, type StudioProject, type StudioQuote, type WorkflowField } from "@/services/api/commerce-studio";
+import { uploadMediaFile } from "@/services/file-storage";
+import { studioApi, type StudioProject, type StudioQuote, type VideoShot, type WorkflowField } from "@/services/api/commerce-studio";
 import type { CanvasNodeContext, CanvasNodeDefinition } from "@/types/canvas-plugin";
 
 const projectPromises = new Map<string, Promise<string>>();
@@ -54,6 +55,24 @@ async function materializeResults(ctx: CanvasNodeContext, projectId: string, pro
     if (ops.length) ctx.applyOps(ops);
 }
 
+async function materializeVideoResults(ctx: CanvasNodeContext, projectId: string, project: StudioProject) {
+    const tasks = project.tasks.filter((task) => task.node_id === ctx.node.id && (task.kind === "commerce:shot" || task.kind === "commerce:compose") && task.status === "待审核" && task.deliverable_id);
+    const known = new Set(ctx.getNodes().map((node) => node.id));
+    const ops: CanvasAgentOp[] = [];
+    for (const task of tasks) {
+        const id = `commerce:video-result:${task.id}`;
+        if (known.has(id)) continue;
+        const blob = await studioApi.videoBlob(projectId, task.deliverable_id!);
+        const media = await uploadMediaFile(blob, "commerce-video");
+        ops.push({ type: "add_node", id, nodeType: workflowKinds.videoResult, title: `${ctx.node.title} · 视频结果`, position: { x: ctx.node.position.x + ctx.node.width + 80, y: ctx.node.position.y }, metadata: {
+            content: media.url, storageKey: media.storageKey, bytes: media.bytes, mimeType: media.mimeType, naturalWidth: media.width, naturalHeight: media.height,
+            durationMs: media.durationMs, status: "success", workflowTaskId: task.id, workflowDeliverableId: task.deliverable_id, workflowShotIndex: task.input_snapshot?.shot_index,
+        } }, { type: "connect_nodes", fromNodeId: ctx.node.id, toNodeId: id });
+        known.add(id);
+    }
+    if (ops.length) ctx.applyOps(ops);
+}
+
 function WorkflowContent({ ctx }: { ctx: CanvasNodeContext }) {
     const [busy, setBusy] = useState(false);
     const [pending, setPending] = useState(false);
@@ -63,9 +82,11 @@ function WorkflowContent({ ctx }: { ctx: CanvasNodeContext }) {
     const sourceId = ctx.node.metadata?.workflowSourceId;
     const versionId = ctx.node.metadata?.workflowVersionId;
     const isUpload = ctx.node.type === workflowKinds.upload;
-    const isResult = ctx.node.type === workflowKinds.result;
+    const isImageResult = ctx.node.type === workflowKinds.result;
+    const isVideoResult = ctx.node.type === workflowKinds.videoResult;
+    const isResult = isImageResult || isVideoResult;
     useEffect(() => {
-        if (ctx.node.type !== workflowKinds.generate && ctx.node.type !== workflowKinds.views && ctx.node.type !== workflowKinds.gallery) return;
+        if (![workflowKinds.generate, workflowKinds.views, workflowKinds.gallery, workflowKinds.shot, workflowKinds.compose].includes(ctx.node.type as never)) return;
         let disposed = false;
         let running = false;
         const refresh = async () => {
@@ -74,13 +95,14 @@ function WorkflowContent({ ctx }: { ctx: CanvasNodeContext }) {
             try {
                 const projectId = await studioId();
                 let project = await studioApi.get(projectId);
-                const pendingTasks = project.tasks.filter((task) => task.node_id === ctx.node.id && task.provider === "SeeAny" &&
+                const pendingTasks = project.tasks.filter((task) => task.node_id === ctx.node.id && (task.provider === "SeeAny" || task.provider === "Flova") &&
                     task.remote_id && !["待审核", "完成", "失败"].includes(task.status));
                 setPending(pendingTasks.length > 0);
                 for (const task of pendingTasks) await studioApi.sync(projectId, task.id);
                 if (pendingTasks.length) project = await studioApi.get(projectId);
-                if (pendingTasks.length) setPending(project.tasks.some((task) => task.node_id === ctx.node.id && task.provider === "SeeAny" && task.remote_id && !["待审核", "完成", "失败"].includes(task.status)));
+                if (pendingTasks.length) setPending(project.tasks.some((task) => task.node_id === ctx.node.id && (task.provider === "SeeAny" || task.provider === "Flova") && task.remote_id && !["待审核", "完成", "失败"].includes(task.status)));
                 if (!disposed) await materializeResults(currentCtx.current, projectId, project);
+                if (!disposed) await materializeVideoResults(currentCtx.current, projectId, project);
                 if (!disposed) setError("");
             } catch (cause) {
                 if (!disposed) setError(errorText(cause));
@@ -106,9 +128,10 @@ function WorkflowContent({ ctx }: { ctx: CanvasNodeContext }) {
         finally { setBusy(false); }
     };
     return <div className="flex h-full flex-col gap-2 overflow-auto p-3 text-sm" style={{ color: ctx.theme.node.text }}>
-        {(isUpload || isResult) && ctx.node.metadata?.content ? <img src={ctx.node.metadata.content} alt={ctx.node.title} className="max-h-36 w-full object-contain" /> : null}
+        {(isUpload || isImageResult) && ctx.node.metadata?.content ? <img src={ctx.node.metadata.content} alt={ctx.node.title} className="max-h-36 w-full object-contain" /> : null}
+        {isVideoResult && ctx.node.metadata?.content ? <video src={ctx.node.metadata.content} controls className="max-h-36 w-full object-contain" /> : null}
         {isUpload ? <label className="cursor-pointer underline" onMouseDown={(event) => event.stopPropagation()}><input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" disabled={busy} onChange={(event) => void upload(event.target.files?.[0])} />{busy ? "保存中…" : sourceId ? "更换商品原图" : "选择商品原图"}</label> : null}
-        {isResult ? <><span>来源任务：{ctx.node.metadata?.workflowTaskId?.slice(0, 12)}</span>
+        {isImageResult ? <><span>来源任务：{ctx.node.metadata?.workflowTaskId?.slice(0, 12)}</span>
             <span>参考图：{ctx.node.metadata?.workflowReferenceIds?.map((id) => id.slice(0, 8)).join("、") || "无"}</span>
             <span>模型：{ctx.node.metadata?.workflowModel || "未知"} · 费用未知</span>
             {ctx.node.metadata?.workflowInferred ? <span>推断视角，未核实结构</span> : null}
@@ -118,9 +141,10 @@ function WorkflowContent({ ctx }: { ctx: CanvasNodeContext }) {
                 try { await studioApi.workflowReview(await studioId(), ctx.node.metadata!.workflowTaskId!, sourceId!, decision); ctx.updateMetadata({ workflowDecision: decision }); }
                 catch (e) { setError(errorText(e)); }
             })()}>{decision}</button>)}</div></> : null}
+        {isVideoResult ? <><span>来源任务：{ctx.node.metadata?.workflowTaskId?.slice(0, 12)}</span><span>分镜：{(ctx.node.metadata?.workflowShotIndex ?? 0) + 1} · 4 秒</span></> : null}
         {!isUpload && !isResult ? <><span>{versionId ? `已确认版本 ${versionId.slice(0, 12)}` : "尚无确认输出"}</span>
             <button type="button" className="self-start underline" onMouseDown={(event) => event.stopPropagation()} onClick={() => ctx.openPanel()}>查看输入 / 编辑 / 生成</button></> : null}
-        {pending ? <span className="flex items-center gap-1"><LoaderCircle className="size-4 animate-spin" />SeeAny 生成中，等待结果…</span> : null}
+        {pending ? <span className="flex items-center gap-1"><LoaderCircle className="size-4 animate-spin" />远端生成中，等待结果…</span> : null}
         {error ? <span className="text-red-500">{error}</span> : null}
     </div>;
 }
@@ -143,12 +167,16 @@ function WorkflowPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =
     const isDetails = ctx.node.type === workflowKinds.details;
     const isPrompt = ctx.node.type === workflowKinds.prompt;
     const isGallery = ctx.node.type === workflowKinds.gallery;
+    const isScript = ctx.node.type === workflowKinds.script;
+    const isShot = ctx.node.type === workflowKinds.shot;
+    const isCompose = ctx.node.type === workflowKinds.compose;
     const isText = isDetails || isPrompt;
     const load = useCallback(async () => {
         const id = await studioId();
         const next = await studioApi.get(id);
         setProject(next);
         await materializeResults(ctx, id, next);
+        await materializeVideoResults(ctx, id, next);
     }, [ctx]);
     useEffect(() => { void load().catch((e) => setError(errorText(e))); }, [load]);
     const taskList = (project?.tasks || []).filter((task) => task.node_id === ctx.node.id).slice().reverse();
@@ -157,6 +185,11 @@ function WorkflowPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =
         const candidate = taskList.find((task) => task.kind === "workflow_text" && task.status === "待审核" && task.candidates?.length);
         if (candidate?.candidates) setFields(candidate.candidates.map((field) => ({ ...field, candidate_task_id: candidate.id })));
     }, [isDetails, fields.length, taskList]);
+    useEffect(() => {
+        if (!isScript || draft.trim()) return;
+        const candidate = taskList.find((task) => task.kind === workflowKinds.script && task.status === "待审核" && task.candidate_text);
+        if (candidate?.candidate_text) setDraft(candidate.candidate_text);
+    }, [isScript, draft, taskList]);
     const versions = (project?.workflow_versions || []).filter((v) => v.node_id === ctx.node.id);
     const inputEdges = ctx.getConnections().filter((edge) => edge.toNodeId === ctx.node.id);
     const patchField = (index: number, patch: Partial<WorkflowField>) => setFields((current) => current.map((item, i) => i === index ? { ...item, ...patch } : item));
@@ -168,9 +201,10 @@ function WorkflowPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =
     const currentGraph = () => {
         const g = graph(ctx);
         const node = g.nodes.find((item) => item.id === ctx.node.id);
-        if (node) { node.draft = draft; node.view = view; node.ratio = ratio; node.model = ctx.node.metadata?.workflowModel;
+        if (node) { node.draft = draft; node.view = view; node.ratio = ctx.node.metadata?.workflowVideoRatio || ratio; node.model = ctx.node.metadata?.workflowVideoModel || ctx.node.metadata?.workflowModel;
             node.gallery_kinds = galleryKinds; node.size = size; node.main_ratio = ctx.node.metadata?.workflowMainRatio || "1:1"; node.detail_ratio = ctx.node.metadata?.workflowDetailRatio || "3:4";
             node.product_name = ctx.node.metadata?.workflowProductName; node.platform = ctx.node.metadata?.workflowPlatform; node.market = ctx.node.metadata?.workflowMarket; node.language = ctx.node.metadata?.workflowLanguage || "中文"; node.style = ctx.node.metadata?.workflowStyle; }
+        if (node) { node.shot_index = ctx.node.metadata?.workflowShotIndex; node.task_id = ctx.node.metadata?.workflowTaskId; node.version_id = ctx.node.metadata?.workflowVersionId; node.deliverable_id = ctx.node.metadata?.workflowDeliverableId; }
         return g;
     };
     const quote = () => guarded(async () => {
@@ -183,6 +217,18 @@ function WorkflowPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =
         const approved = await studioApi.workflowQuote(id, ctx.node.id, current);
         await studioApi.workflowRun(id, ctx.node.id, current, approved.fingerprint, crypto.randomUUID());
         setOffer(null);
+    });
+    const runVideo = () => guarded(async () => {
+        const id = await studioId();
+        const current = currentGraph();
+        const approved = await studioApi.videoQuote(id, ctx.node.id, current);
+        await studioApi.videoRun(id, ctx.node.id, current, approved.fingerprint, crypto.randomUUID());
+    });
+    const confirmScript = () => guarded(async () => {
+        const parsed = JSON.parse(draft) as { shots?: VideoShot[] };
+        if (!Array.isArray(parsed.shots) || parsed.shots.length !== 4) throw new Error("请先生成包含 4 段分镜的 JSON 脚本");
+        const version = await studioApi.videoConfirm(await studioId(), { node_id: ctx.node.id, kind: workflowKinds.script, shots: parsed.shots });
+        ctx.updateMetadata({ workflowVersionId: version.id, workflowDraft: draft });
     });
     const confirm = () => guarded(async () => {
         const version = await studioApi.workflowConfirm(await studioId(), { node_id: ctx.node.id,
@@ -227,7 +273,7 @@ function WorkflowPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =
             <button type="button" className="mr-4 underline" disabled={busy} onClick={() => void guarded(async () => { const health = await studioApi.health(); if (!health.deepseek) throw new Error("DeepSeek 未配置，仍可手写确认"); const current = currentGraph(); const approved = await studioApi.workflowQuote(await studioId(), ctx.node.id, current); await studioApi.workflowRun(await studioId(), ctx.node.id, current, approved.fingerprint, crypto.randomUUID()); })}>{busy ? "DeepSeek 生成中…" : "生成候选 · DeepSeek"}</button>
             <button type="button" className="underline" disabled={busy} onClick={() => void confirm()}>确认新版本</button>
             {versions.length ? <p className="mt-2 text-xs">已确认 {versions.length} 版；当前输出 {ctx.node.metadata?.workflowVersionId?.slice(0, 8)}</p> : null}
-        </> : <>
+        </> : isScript ? <><div className="mb-2">四段分镜脚本（DeepSeek）</div><textarea className="h-52 w-full rounded border bg-transparent p-2 font-mono text-xs" placeholder='生成后会得到包含 shots 数组的 JSON；也可以手工修改' value={draft} onChange={(event) => { setDraft(event.target.value); ctx.updateMetadata({ workflowDraft: event.target.value }); }} /><div className="mt-3 flex gap-4"><button type="button" className="underline" disabled={busy} onClick={() => void runVideo()}>{busy ? "DeepSeek 生成中…" : "生成四段分镜"}</button><button type="button" className="underline" disabled={busy || !draft.trim()} onClick={() => void confirmScript()}>确认脚本版本</button></div></> : isShot || isCompose ? <><div className="mb-2">{isShot ? `第 ${(ctx.node.metadata?.workflowShotIndex ?? 0) + 1} 段分镜视频` : "Flova 合成（约 15 秒）"}</div>{isShot ? <label>分镜编号 <select className="ml-2 bg-transparent" value={ctx.node.metadata?.workflowShotIndex ?? 0} onChange={(event) => ctx.updateMetadata({ workflowShotIndex: Number(event.target.value) })}>{[0, 1, 2, 3].map((index) => <option key={index} value={index}>{index + 1}</option>)}</select></label> : <p>需要连接四个已生成的分镜视频结果。</p>}<p className="mt-2 text-xs">Flova 任务会在后台运行，完成后自动生成视频结果节点。</p><button type="button" className="mt-3 underline" disabled={busy} onClick={() => void runVideo()}>{busy ? "Flova 生成中…" : isShot ? "生成 4 秒分镜视频" : "合成约 15 秒视频"}</button></> : <>
             {ctx.node.type === workflowKinds.views ? <label>视角 <select className="ml-2 bg-transparent" value={view} onChange={(event) => { setView(event.target.value); ctx.updateMetadata({ workflowView: event.target.value }); setOffer(null); }}><option>正面</option><option>侧面</option><option>背面</option></select></label> : null}
             {ctx.node.type === workflowKinds.generate ? <label>比例 <select className="ml-2 bg-transparent" value={ratio} onChange={(event) => { setRatio(event.target.value); ctx.updateMetadata({ workflowRatio: event.target.value }); setOffer(null); }}>{["1:1", "3:4", "4:3", "9:16", "16:9", "3:2", "2:3"].map((r) => <option key={r}>{r}</option>)}</select></label> : null}
             {isGallery ? <div className="space-y-2">
@@ -256,6 +302,10 @@ const specs: Array<[string, string, React.ReactNode, string]> = [
     [workflowKinds.generate, "生成商品图", <Sparkles className="size-5" />, "读取相连图片和确认提示词"],
     [workflowKinds.gallery, "电商套图", <Images className="size-5" />, "按模板批量生成主图、详情和卖点图"],
     [workflowKinds.result, "商品图结果", <FileImage className="size-5" />, "独立生成结果"],
+    [workflowKinds.script, "分镜脚本（DeepSeek）", <Clapperboard className="size-5" />, "生成四段 4 秒分镜脚本"],
+    [workflowKinds.shot, "分镜视频（Flova）", <Film className="size-5" />, "按编号生成 4 秒视频"],
+    [workflowKinds.compose, "Flova 合成", <Film className="size-5" />, "合成四个分镜为约 15 秒视频"],
+    [workflowKinds.videoResult, "视频结果", <Film className="size-5" />, "已生成视频结果"],
 ];
 let registered = false;
 export function registerCommerceWorkflowNodes() {
@@ -263,9 +313,9 @@ export function registerCommerceWorkflowNodes() {
     registered = true;
     registerNodeDefinitions(specs.map(([type, title, icon, description]): CanvasNodeDefinition => ({
         type, title, icon, description, defaultSize: { width: 290, height: 200 },
-        defaultMetadata: type === workflowKinds.views ? { workflowView: "正面" } : type === workflowKinds.generate ? { workflowRatio: "1:1" } : {},
-        showInCreateMenu: type !== workflowKinds.result, hasSourceHandle: type !== workflowKinds.generate,
-        hidePanel: type === workflowKinds.upload || type === workflowKinds.result,
-        Content: WorkflowContent, Panel: type === workflowKinds.upload || type === workflowKinds.result ? undefined : WorkflowPanel,
+        defaultMetadata: type === workflowKinds.views ? { workflowView: "正面" } : type === workflowKinds.generate ? { workflowRatio: "1:1" } : type === workflowKinds.shot ? { workflowShotIndex: 0, workflowVideoModel: "flova", workflowVideoRatio: "9:16" } : {},
+        showInCreateMenu: type !== workflowKinds.result && type !== workflowKinds.videoResult, hasSourceHandle: type !== workflowKinds.generate,
+        hidePanel: type === workflowKinds.upload || type === workflowKinds.result || type === workflowKinds.videoResult,
+        Content: WorkflowContent, Panel: type === workflowKinds.upload || type === workflowKinds.result || type === workflowKinds.videoResult ? undefined : WorkflowPanel,
     })), "commerce-workflow");
 }
