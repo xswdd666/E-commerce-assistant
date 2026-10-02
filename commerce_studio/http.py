@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from .core import Store
-from . import backup, delivery, finishing, flova_flow, gallery, jev, legacy, observations, prompts, service, video_export, workflow
+from . import backup, delivery, finishing, flova_flow, gallery, jev, legacy, observations, prompts, service, video_export, video_workflow, workflow
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -142,6 +142,12 @@ class Handler(BaseHTTPRequestHandler):
                     return workflow.quote(STORE, project, body)
                 if parts[3:] == ["workflow", "run"]:
                     return workflow.run(STORE, project, body)
+                if parts[3:] == ["video", "quote"]:
+                    return video_workflow.quote(STORE, project, body)
+                if parts[3:] == ["video", "run"]:
+                    return video_workflow.run(STORE, project, body)
+                if parts[3:] == ["video", "confirm"]:
+                    return video_workflow.confirm(STORE, project, body)
                 if parts[3:] == ["workflow", "confirm"]:
                     return workflow.confirm(STORE, project, body)
                 if parts[3:] == ["workflow", "review"]:
